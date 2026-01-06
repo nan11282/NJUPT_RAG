@@ -1,0 +1,11 @@
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/njupter_rag
+    username: njupter
+    password: njupter123
+
+logging:
+  level:
+    root: INFO
+    com.njupt.rag: DEBUG
+

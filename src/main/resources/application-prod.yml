@@ -1,0 +1,15 @@
+spring:
+  datasource:
+    url: ${DATABASE_URL:jdbc:postgresql://postgres:5432/njupter_rag}
+    username: ${DATABASE_USER:njupter}
+    password: ${DATABASE_PASSWORD:njupter123}
+
+  ai:
+    openai:
+      api-key: ${DEEPSEEK_API_KEY}
+
+logging:
+  level:
+    root: WARN
+    com.njupt.rag: INFO
+

@@ -1,0 +1,24 @@
+version: '3.8'
+
+services:
+  njupt-postgres:
+    image: pgvector/pgvector:pg16
+    container_name: njupt-postgres
+    environment:
+      - POSTGRES_DB=njupt_rag       # 数据库名
+      - POSTGRES_USER=postgres      # 用户名
+      - POSTGRES_PASSWORD=postgres  # 密码 (你设置的是 postgres)
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      # 健康检查：确保它检查的是正确的数据库名 (njupt_rag)
+      test: ["CMD-SHELL", "pg_isready -U postgres -d njupt_rag"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:
+    driver: local

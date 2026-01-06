@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>登录 - 南邮 RAG 助手</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f4f4f9;
+            margin: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+        .login-container {
+            background: white;
+            padding: 40px;
+            border-radius: 8px;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+            width: 100%;
+            max-width: 400px;
+            text-align: center;
+        }
+        .header {
+            background-color: #0056b3; /* 南邮蓝 */
+            color: white;
+            padding: 15px;
+            text-align: center;
+            font-size: 1.2em;
+            font-weight: bold;
+            border-radius: 8px 8px 0 0;
+            margin: -40px -40px 30px -40px;
+        }
+        h2 {
+            margin-bottom: 30px;
+            color: #333;
+        }
+        .input-group {
+            margin-bottom: 20px;
+            text-align: left;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            color: #555;
+        }
+        input[type="text"], input[type="password"] {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #ddd;
+            border-radius: 25px;
+            box-sizing: border-box;
+            font-size: 16px;
+        }
+        button {
+            width: 100%;
+            padding: 12px;
+            background-color: #0056b3;
+            color: white;
+            border: none;
+            border-radius: 25px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: background 0.3s;
+        }
+        button:hover {
+            background-color: #004494;
+        }
+        #error-message {
+            color: #d93025;
+            margin-top: 15px;
+            height: 20px;
+        }
+    </style>
+</head>
+<body>
+
+<div class="login-container">
+    <div class="header">🎓 南邮 AI 学长 - 身份认证</div>
+    <div class="input-group">
+        <label for="username">用户名</label>
+        <input type="text" id="username" name="username" required>
+    </div>
+    <div class="input-group">
+        <label for="password">密码</label>
+        <input type="password" id="password" name="password" required>
+    </div>
+    <button onclick="login()">登录</button>
+    <div id="error-message"></div>
+</div>
+
+<script>
+    async function login() {
+        const username = document.getElementById('username').value;
+        const password = document.getElementById('password').value;
+        const errorMessage = document.getElementById('error-message');
+        
+        if (!username || !password) {
+            errorMessage.textContent = '请输入用户名和密码。';
+            return;
+        }
+
+        // 使用 Basic Auth 凭证测试 /api/chat/stream 接口的访问权限
+        const headers = new Headers();
+        headers.append('Authorization', 'Basic ' + btoa(username + ":" + password));
+
+        try {
+            // 我们尝试访问一个需要认证的端点来验证凭据
+            // 这里选择聊天接口，因为它对两个角色都开放
+            const response = await fetch('/api/chat/stream?question=hello', { method: 'GET', headers: headers });
+
+            if (response.ok || response.status === 400) { // 200 OK or 400 Bad Request (if question is empty) means auth is ok
+                // 认证成功，将凭证存入 sessionStorage
+                sessionStorage.setItem('credentials', btoa(username + ":" + password));
+                sessionStorage.setItem('username', username);
+
+                // 根据用户名判断角色并重定向
+                if (username === 'admin') {
+                    window.location.href = '/admin.html';
+                } else {
+                    window.location.href = '/chat.html';
+                }
+            } else if (response.status === 401) {
+                errorMessage.textContent = '认证失败：用户名或密码错误。';
+            } else {
+                errorMessage.textContent = `发生未知错误: ${response.status}`;
+            }
+        } catch (error) {
+            errorMessage.textContent = '无法连接到服务器。';
+            console.error('Login error:', error);
+        }
+    }
+</script>
+
+</body>
+</html>

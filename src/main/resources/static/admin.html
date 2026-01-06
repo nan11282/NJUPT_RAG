@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>管理员后台 - 文档管理</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f4f4f9;
+            margin: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            flex-direction: column;
+        }
+        .admin-container {
+            background: white;
+            padding: 40px;
+            border-radius: 8px;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+            width: 100%;
+            max-width: 600px;
+            text-align: center;
+        }
+        .header {
+            background-color: #d9534f; /* 管理员红色 */
+            color: white;
+            padding: 15px;
+            text-align: center;
+            font-size: 1.2em;
+            font-weight: bold;
+            border-radius: 8px 8px 0 0;
+            margin: -40px -40px 30px -40px;
+        }
+        .upload-section {
+            border: 2px dashed #ddd;
+            border-radius: 8px;
+            padding: 30px;
+            margin-bottom: 20px;
+        }
+        input[type="file"] {
+            display: none; /* 隐藏默认的文件输入 */
+        }
+        .file-label {
+            background-color: #0056b3;
+            color: white;
+            padding: 12px 20px;
+            border-radius: 25px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: background 0.3s;
+            display: inline-block;
+        }
+        .file-label:hover {
+            background-color: #004494;
+        }
+        #file-name {
+            margin-top: 15px;
+            font-style: italic;
+            color: #555;
+        }
+        button {
+            width: 100%;
+            padding: 12px;
+            background-color: #d9534f;
+            color: white;
+            border: none;
+            border-radius: 25px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: background 0.3s;
+        }
+        button:hover {
+            background-color: #c9302c;
+        }
+        button:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+        #upload-status {
+            margin-top: 15px;
+            height: 20px;
+            font-weight: bold;
+        }
+        .nav-links {
+            margin-top: 20px;
+        }
+        .nav-links a {
+            color: #0056b3;
+            text-decoration: none;
+            margin: 0 10px;
+        }
+    </style>
+</head>
+<body>
+
+<div class="admin-container">
+    <div class="header">🛡️ 管理员后台</div>
+    <h2>文档上传</h2>
+    <div class="upload-section">
+        <label for="file-upload" class="file-label">选择 PDF 文件</label>
+        <input type="file" id="file-upload" accept=".pdf" onchange="displayFileName()">
+        <p id="file-name">未选择文件</p>
+    </div>
+    <button onclick="uploadFile()" id="upload-btn" disabled>上传</button>
+    <div id="upload-status"></div>
+    <div class="nav-links">
+        <a href="/chat.html">前往聊天</a>
+        <a href="#" onclick="logout()">退出登录</a>
+    </div>
+</div>
+
+<script>
+    const fileUpload = document.getElementById('file-upload');
+    const fileNameDisplay = document.getElementById('file-name');
+    const uploadBtn = document.getElementById('upload-btn');
+    const uploadStatus = document.getElementById('upload-status');
+
+    // 检查登录状态
+    window.onload = function() {
+        const credentials = sessionStorage.getItem('credentials');
+        const username = sessionStorage.getItem('username');
+        if (!credentials || username !== 'admin') {
+            window.location.href = '/login.html';
+        }
+    };
+
+    function displayFileName() {
+        if (fileUpload.files.length > 0) {
+            fileNameDisplay.textContent = fileUpload.files[0].name;
+            uploadBtn.disabled = false;
+        } else {
+            fileNameDisplay.textContent = '未选择文件';
+            uploadBtn.disabled = true;
+        }
+    }
+
+    async function uploadFile() {
+        if (fileUpload.files.length === 0) {
+            uploadStatus.textContent = '请先选择一个文件。';
+            uploadStatus.style.color = '#d93025';
+            return;
+        }
+
+        const file = fileUpload.files[0];
+        const formData = new FormData();
+        formData.append('file', file);
+
+        uploadBtn.disabled = true;
+        uploadStatus.textContent = '正在上传并处理...';
+        uploadStatus.style.color = '#0056b3';
+
+        const credentials = sessionStorage.getItem('credentials');
+        const headers = new Headers();
+        headers.append('Authorization', 'Basic ' + credentials);
+
+        try {
+            const response = await fetch('/api/documents/upload', {
+                method: 'POST',
+                headers: headers,
+                body: formData
+            });
+
+            if (response.ok) {
+                uploadStatus.textContent = '✅ 文件上传成功！';
+                uploadStatus.style.color = 'green';
+            } else {
+                const errorText = await response.text();
+                uploadStatus.textContent = `❌ 上传失败: ${response.status} ${errorText}`;
+                uploadStatus.style.color = '#d93025';
+            }
+        } catch (error) {
+            uploadStatus.textContent = '❌ 上传出错，请检查网络连接。';
+            uploadStatus.style.color = '#d93025';
+            console.error('Upload error:', error);
+        } finally {
+            uploadBtn.disabled = false;
+        }
+    }
+
+    function logout() {
+        sessionStorage.clear();
+        window.location.href = '/login.html';
+    }
+</script>
+
+</body>
+</html>

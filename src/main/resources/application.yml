@@ -1,0 +1,51 @@
+server:
+  port: 8080
+  servlet:
+    encoding:
+      charset: UTF-8
+      force: true
+      enabled: true
+
+
+spring:
+  application:
+    name: njupt-rag-assistant
+
+  # 数据库配置
+  datasource:
+    url: jdbc:postgresql://localhost:5432/njupt_rag
+    username: postgres
+    password: postgres
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    hibernate:
+      ddl-auto: update
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+
+  # 👇👇👇 这里的配置必须跟 AiConfig.java 里的 @ConfigurationProperties 对应 👇👇👇
+  ai:
+    # 1. 自定义 DeepSeek 配置
+    deepseek:
+      base-url: https://api.deepseek.com
+      api-key: sk-96d1cf055bec4712bca304802d5a6520 # 填刚才验证过的
+      chat-model: deepseek-chat
+
+    # 2. 自定义 SiliconFlow 配置
+    siliconflow:
+      base-url: https://api.siliconflow.cn
+      api-key: sk-gpiqjshszflyacfvulvatsgbtbjteypknfjcdbwzyahoyiea # 填刚才验证过的
+      embedding-model: BAAI/bge-m3
+
+    # 3. 向量库配置 (通用)
+    vectorstore:
+      pgvector:
+        dimensions: 1024
+        initialize-schema: false
+        index-type: HNSW
+
+logging:
+  level:
+    org.springframework.web.client.RestClient: DEBUG # 👈 开启 REST 客户端日志
+    org.springframework.ai.openai.api: DEBUG         # 👈 开启 OpenAI API 内部日志

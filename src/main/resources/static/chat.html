@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>南邮 RAG 智能问答助手</title>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f4f4f9;
+            margin: 0;
+            display: flex;
+            justify-content: center;
+            height: 100vh;
+        }
+
+        .chat-container {
+            width: 100%;
+            max-width: 800px;
+            background: white;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+            display: flex;
+            flex-direction: column;
+            height: 100%;
+        }
+
+        .header {
+            background-color: #0056b3; /* 南邮蓝 */
+            color: white;
+            padding: 15px;
+            text-align: center;
+            font-size: 1.2em;
+            font-weight: bold;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .header .title {
+            flex-grow: 1;
+            text-align: center;
+        }
+
+        .header .nav-links a {
+            color: white;
+            text-decoration: none;
+            margin: 0 10px;
+            font-size: 0.8em;
+        }
+
+        .chat-box {
+            flex: 1;
+            padding: 20px;
+            overflow-y: auto;
+            border-bottom: 1px solid #ddd;
+        }
+
+        .message {
+            margin-bottom: 15px;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .message.user {
+            align-items: flex-end;
+        }
+
+        .message.ai {
+            align-items: flex-start;
+        }
+
+        .bubble {
+            max-width: 80%;
+            padding: 10px 15px;
+            border-radius: 15px;
+            line-height: 1.5;
+            position: relative;
+            word-wrap: break-word;
+        }
+
+        .user .bubble {
+            background-color: #0056b3;
+            color: white;
+            border-bottom-right-radius: 2px;
+        }
+
+        .ai .bubble {
+            background-color: #e9ecef;
+            color: #333;
+            border-bottom-left-radius: 2px;
+        }
+
+        .ai .bubble pre {
+            background: #2d2d2d;
+            color: #ccc;
+            padding: 10px;
+            border-radius: 5px;
+            overflow-x: auto;
+        }
+
+        .input-area {
+            padding: 20px;
+            display: flex;
+            gap: 10px;
+            background: #fff;
+        }
+
+        input[type="text"] {
+            flex: 1;
+            padding: 12px;
+            border: 1px solid #ddd;
+            border-radius: 25px;
+            outline: none;
+            font-size: 16px;
+        }
+
+        button {
+            padding: 10px 25px;
+            background-color: #0056b3;
+            color: white;
+            border: none;
+            border-radius: 25px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: background 0.3s;
+        }
+
+        button:hover {
+            background-color: #004494;
+        }
+
+        button:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+    </style>
+</head>
+<body>
+
+<div class="chat-container">
+    <div class="header">
+        <div class="nav-links"></div>
+        <div class="title">🎓 南邮 AI 学长 (RAG 增强版)</div>
+        <div class="nav-links">
+            <a href="#" onclick="logout()">退出登录</a>
+        </div>
+    </div>
+
+    <div class="chat-box" id="chatBox">
+        <div class="message ai">
+            <div class="bubble">你好！我是计算机学院的 AI 助手，关于培养方案、课程学分的问题都可以问我哦~</div>
+        </div>
+    </div>
+
+    <div class="input-area">
+        <input type="text" id="questionInput" placeholder="请输入你的问题..." onkeydown="if(event.keyCode==13) sendQuestion()">
+        <button onclick="sendQuestion()" id="sendBtn">发送</button>
+    </div>
+</div>
+
+<script>
+    const chatBox = document.getElementById('chatBox');
+    const questionInput = document.getElementById('questionInput');
+    const sendBtn = document.getElementById('sendBtn');
+    const credentials = sessionStorage.getItem('credentials');
+
+    // 登录检查
+    window.onload = function() {
+        if (!credentials) {
+            window.location.href = '/login.html';
+            return;
+        }
+        const username = sessionStorage.getItem('username');
+        if (username === 'admin') {
+            const nav = document.querySelector('.header .nav-links');
+            const adminLink = document.createElement('a');
+            adminLink.href = '/admin.html';
+            adminLink.textContent = '管理后台';
+            nav.appendChild(adminLink);
+        }
+    };
+
+    function sendQuestion() {
+        const question = questionInput.value.trim();
+        if (!question) return;
+
+        appendMessage('user', question);
+        questionInput.value = '';
+        sendBtn.disabled = true;
+
+        const aiBubble = appendMessage('ai', 'Thinking...');
+        let fullText = "";
+
+        const headers = new Headers();
+        headers.append('Authorization', 'Basic ' + credentials);
+
+        fetch(`/api/chat/stream?question=${encodeURIComponent(question)}`, { headers: headers })
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder('utf-8');
+                let isFirstChunk = true;
+
+                function read() {
+                    reader.read().then(({ done, value }) => {
+                        if (done) {
+                            sendBtn.disabled = false;
+                            return;
+                        }
+
+                        if (isFirstChunk) {
+                            aiBubble.innerHTML = "";
+                            isFirstChunk = false;
+                        }
+                        
+                        // SSE format is "data: ...\n\n". We need to parse it.
+                        const chunk = decoder.decode(value, { stream: true });
+                        const lines = chunk.split('\n');
+                        for (const line of lines) {
+                            if (line.startsWith('data:')) {
+                                fullText += line.substring(5).trim();
+                            }
+                        }
+
+                        aiBubble.innerHTML = marked.parse(fullText);
+                        chatBox.scrollTop = chatBox.scrollHeight;
+                        
+                        read(); // Continue reading
+                    });
+                }
+                read();
+            })
+            .catch(error => {
+                console.error('Fetch error:', error);
+                aiBubble.innerHTML = "❌ 连接超时或服务器异常";
+                sendBtn.disabled = false;
+            });
+    }
+
+    function appendMessage(role, text) {
+        const msgDiv = document.createElement('div');
+        msgDiv.className = `message ${role}`;
+
+        const bubble = document.createElement('div');
+        bubble.className = 'bubble';
+        bubble.innerHTML = text;
+
+        msgDiv.appendChild(bubble);
+        chatBox.appendChild(msgDiv);
+        chatBox.scrollTop = chatBox.scrollHeight;
+        return bubble;
+    }
+
+    function logout() {
+        sessionStorage.clear();
+        window.location.href = '/login.html';
+    }
+</script>
+
+</body>
+</html>
