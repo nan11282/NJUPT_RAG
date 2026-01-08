@@ -11,19 +11,30 @@ import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.ai.openai.OpenAiEmbeddingModel;
 import org.springframework.ai.openai.OpenAiEmbeddingOptions;
 import org.springframework.ai.openai.api.OpenAiApi;
-import org.springframework.ai.vectorstore.PgVectorStore; // 👈 新增
-import org.springframework.ai.vectorstore.VectorStore; // 👈 新增
+import org.springframework.ai.vectorstore.PgVectorStore;
+import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Primary;
-import org.springframework.jdbc.core.JdbcTemplate; // 👈 新增
-import org.springframework.stereotype.Component; // 👈 新增
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.stereotype.Component;
 
+/**
+ * Spring AI 相关配置类。
+ * <p>
+ * 负责配置和初始化项目中使用的各类AI模型和向量数据库。
+ */
 @Configuration
 public class AiConfig {
 
-    // 1. Chat 配置 (DeepSeek) - 保持不变
+    /**
+     * 配置聊天模型 (ChatModel)。
+     * 使用 DeepSeek 的 API 作为聊天服务。
+     *
+     * @param properties DeepSeek 服务的配置属性
+     * @return OpenAiChatModel 实例
+     */
     @Bean
     public ChatModel chatModel(DeepSeekProperties properties) {
         var openAiApi = new OpenAiApi(properties.getBaseUrl(), properties.getApiKey());
@@ -33,50 +44,60 @@ public class AiConfig {
         return new OpenAiChatModel(openAiApi, chatOptions);
     }
 
+    /**
+     * 基于配置好的 ChatModel 创建一个便捷的 ChatClient。
+     *
+     * @param chatModel 聊天模型
+     * @return ChatClient 实例
+     */
     @Bean
     public ChatClient chatClient(ChatModel chatModel) {
         return ChatClient.builder(chatModel).build();
     }
 
-    // 2. Embedding 配置 (SiliconFlow) - 保持不变
+    /**
+     * 配置文本嵌入模型 (EmbeddingModel)。
+     * 使用 SiliconFlow 的 API 作为文本嵌入服务。
+     * 设置为 @Primary，作为默认的 EmbeddingModel Bean。
+     *
+     * @param properties SiliconFlow 服务的配置属性
+     * @return OpenAiEmbeddingModel 实例
+     */
     @Bean
     @Primary
     public EmbeddingModel embeddingModel(SiliconFlowProperties properties) {
-        System.out.println("========== 硅基流动配置检查 ==========");
-        System.out.println("Base URL: " + properties.getBaseUrl());
-        System.out.println("最终使用的模型名: " + properties.getEmbeddingModel());
-        System.out.println("======================================");
-
         var openAiApi = new OpenAiApi(properties.getBaseUrl(), properties.getApiKey());
-
-        // 强制修正模型名逻辑（为了保险，这里再加一次判断）
-        String modelName = properties.getEmbeddingModel();
-        if (modelName == null || modelName.isEmpty())
-            modelName = "BAAI/bge-m3";
-
         var embeddingOptions = OpenAiEmbeddingOptions.builder()
-                .withModel(modelName)
+                .withModel(properties.getEmbeddingModel())
                 .build();
-
         return new OpenAiEmbeddingModel(openAiApi, MetadataMode.EMBED, embeddingOptions);
     }
 
-    // 👇👇👇 3. 新增：手动接管 VectorStore (关键！) 👇👇👇
+    /**
+     * 配置向量数据库 (VectorStore)。
+     * 使用 PostgreSQL 的 pgvector 扩展进行向量存储和检索。
+     *
+     * @param jdbcTemplate   用于数据库操作的 Spring JDBC 模板
+     * @param embeddingModel 用于生成文档向量的嵌入模型
+     * @return PgVectorStore 实例
+     */
     @Bean
     public VectorStore vectorStore(JdbcTemplate jdbcTemplate, EmbeddingModel embeddingModel) {
-        // 根据你的截图提示，必须凑齐这 7 个参数
         return new PgVectorStore(
                 jdbcTemplate,
                 embeddingModel,
-                1024, // 3. 维度
-                PgVectorStore.PgDistanceType.COSINE_DISTANCE, // 4. 距离度量 (需要引入这个枚举)
-                false, // 5. 是否启动时删表 (生产环境填false)
-                PgVectorStore.PgIndexType.HNSW, // 6. 索引类型
-                true // 7. 是否初始化Schema (自动建表)
+                1024, // 向量维度，与 embeddingModel 保持一致
+                PgVectorStore.PgDistanceType.COSINE_DISTANCE, // 使用余弦距离进行相似度计算
+                false, // 在生产环境中，不应在每次启动时删除并重建表
+                PgVectorStore.PgIndexType.HNSW, // 使用 HNSW 索引以优化检索性能
+                true // 自动初始化数据库 schema (如果表不存在则创建)
         );
     }
 
-    // 属性类
+    /**
+     * DeepSeek API 的配置属性类。
+     * 从 application.yml 文件中读取 `spring.ai.deepseek` 前缀的配置。
+     */
     @Setter
     @Getter
     @Component
@@ -87,6 +108,10 @@ public class AiConfig {
         private String chatModel;
     }
 
+    /**
+     * SiliconFlow API 的配置属性类。
+     * 从 application.yml 文件中读取 `spring.ai.siliconflow` 前缀的配置。
+     */
     @Setter
     @Getter
     @Component

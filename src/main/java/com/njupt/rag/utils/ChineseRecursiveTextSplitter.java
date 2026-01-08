@@ -11,15 +11,18 @@ import java.util.List;
 import java.util.regex.Pattern;
 
 /**
- * 专为中文 RAG 优化的递归文本切分器。
+ * 面向中文文本的递归文本切分器。
  * <p>
- * 策略：
- * 1. 优先尝试按“段落”（双换行）切分。
- * 2. 其次按“行”（单换行）切分（这对表格行非常重要）。
- * 3. 再次按“句子”（句号、感叹号等）切分。
- * 4. 然后按“短语”（逗号、分号）切分。
- * 5. 最后按“单词/字”（空格、制表符）切分（这对表格列非常重要）。
- * 6. 兜底：如果以上都无法将文本切小，则强制按字符数截断。
+ * 目标：在不破坏语义的前提下，将长文本拆分为更小的片段，方便后续向量化处理。
+ * <p>
+ * 切分优先级（从高到低）：
+ * 1. 段落（两个换行）
+ * 2. 行（单换行）
+ * 3. 句子（句号、感叹号、问号）
+ * 4. 短语（分号）
+ * 5. 子句（逗号）
+ * 6. 单词/字符（空格、Tab）
+ * 7. 兜底：固定长度截断
  */
 public class ChineseRecursiveTextSplitter extends TextSplitter {
 
@@ -28,26 +31,27 @@ public class ChineseRecursiveTextSplitter extends TextSplitter {
     private final int chunkSize;
     private final int chunkOverlap;
 
-    // 分隔符优先级列表
+    // 分隔符优先级列表（越靠前优先级越高）
     private final List<String> separators;
 
     /**
-     * @param chunkSize    目标块大小（字符数）。建议 500-800。
-     * @param chunkOverlap 块之间的重叠部分（字符数）。建议 50-100。
+     * @param chunkSize    目标块长度（单位：字符）。
+     * @param chunkOverlap 相邻块之间的重叠长度（单位：字符）。
      */
     public ChineseRecursiveTextSplitter(int chunkSize, int chunkOverlap) {
         this.chunkSize = chunkSize;
         this.chunkOverlap = chunkOverlap;
-        // 初始化分隔符优先级，越靠前优先级越高
         this.separators = Arrays.asList(
-                "\n\n",       // 1. 物理段落
-                "\n",         // 2. 换行（表格的一行通常以此结束）
-                "。", "！", "？", "!", "?", // 3. 句子结束
-                "；", ";",    // 4. 分号
-                "，", ",",    // 5. 逗号
-                " ", "\t"     // 6. 空格和制表符（专门应对表格列分割）
+                "\n\n",                 // 段落
+                "\n",                   // 换行
+                "。", "！", "？", "!", "?",  // 句子结束符
+                "；", ";",               // 分号
+                "，", ",",               // 逗号
+                " ", "\t"               // 空格、制表符
         );
     }
+
+    /* ============================= 公开接口 ============================= */
 
     @Override
     public List<Document> apply(List<Document> documents) {
@@ -57,111 +61,93 @@ public class ChineseRecursiveTextSplitter extends TextSplitter {
             if (content == null || content.isEmpty()) {
                 continue;
             }
-
-            // 调用内部核心切分逻辑
+            // 调用核心切分逻辑
             List<String> chunks = splitText(content, this.separators);
-
+            // 将分割后的文本与原始元数据重新封装为 Document
             for (String chunk : chunks) {
-                // 关键：保留原文档的 Metadata（页码、文件名等），这对引用来源至关重要
-                Document newDoc = new Document(chunk, doc.getMetadata());
-                splitDocuments.add(newDoc);
+                splitDocuments.add(new Document(chunk, doc.getMetadata()));
             }
         }
         return splitDocuments;
     }
 
     /**
-     * 实现父类 TextSplitter 的抽象方法。
-     * 虽然我们的 apply 方法已经覆盖了逻辑，但实现此方法可以保证父类契约完整，
-     * 防止框架其他部分直接调用此方法时出错。
+     * 覆写抽象方法，防止框架其他地方直接调用时出错。
      */
     @Override
     protected List<String> splitText(String text) {
         return splitText(text, this.separators);
     }
 
+    /* ============================= 核心实现 ============================= */
+
     /**
-     * 递归切分文本的核心私有方法
-     *
-     * @param text       要切分的文本
-     * @param separators 当前可用的分隔符列表（递归过程中会越来越少）
-     * @return 切分后的文本块列表
+     * 递归切分核心方法。
      */
     private List<String> splitText(String text, List<String> separators) {
         List<String> finalChunks = new ArrayList<>();
 
-        // 1. 终止条件：如果文本已经小于 chunkSize，直接返回
+        // 1. 终止条件：文本已足够短
         if (text.length() <= chunkSize) {
             finalChunks.add(text);
             return finalChunks;
         }
 
-        // 2. 寻找最佳分隔符
+        // 2. 选择当前可用分隔符中，文本内首次出现的分隔符
         String separator = null;
         List<String> nextSeparators = new ArrayList<>();
-
-        // 找到当前列表中第一个存在于文本中的分隔符
         for (int i = 0; i < separators.size(); i++) {
             String s = separators.get(i);
             if (text.contains(s)) {
                 separator = s;
-                // 剩余的分隔符用于下一级递归
                 nextSeparators = separators.subList(i + 1, separators.size());
                 break;
             }
         }
 
-        // 3. 兜底逻辑：如果找不到任何分隔符（比如长串乱码或纯数字）
+        // 3. 无分隔符可用：兜底暴力切分
         if (separator == null) {
             return bruteForceSplit(text);
         }
 
-        // 4. 执行切分
-        // 使用 Pattern.quote 避免分隔符中的特殊字符（如?）干扰正则
+        // 4. 使用找到的分隔符进行初步切分
         String[] rawSplits = text.split(Pattern.quote(separator));
 
-        // 5. 合并碎片（Merge）
+        // 5. 合并碎片，确保每块尽可能接近 chunkSize
         List<String> goodSplits = new ArrayList<>();
         StringBuilder currentChunk = new StringBuilder();
 
         for (String split : rawSplits) {
-            // 如果片段是空的（例如连续空格），直接跳过逻辑处理，但可能需要补分隔符
             if (split.isEmpty() && currentChunk.length() > 0) {
-                // 这种情况通常是连续分隔符，比如两个空格。
-                // 简单的策略是只追加分隔符，不追加内容
-                if(currentChunk.length() + separator.length() <= chunkSize) {
+                if (currentChunk.length() + separator.length() <= chunkSize) {
                     currentChunk.append(separator);
                 }
                 continue;
             }
 
-            // 检查：如果 (当前块 + 分隔符 + 新片段) 超过限制
             if (currentChunk.length() + separator.length() + split.length() > chunkSize) {
-                // A. 保存当前积攒的块
+                // 当前块已满 -> 先保存
                 if (currentChunk.length() > 0) {
                     goodSplits.add(currentChunk.toString());
                     currentChunk.setLength(0);
                 }
 
-                // B. 处理新片段
+                // 超长片段 -> 递归继续切
                 if (split.length() > chunkSize) {
-                    // 如果新片段本身依然超长，递归调用下一级分隔符
-                    List<String> subChunks = splitText(split, nextSeparators);
-                    goodSplits.addAll(subChunks);
+                    goodSplits.addAll(splitText(split, nextSeparators));
                 } else {
-                    // 如果新片段能放下，就开始新的 currentChunk
                     currentChunk.append(split);
                 }
             } else {
-                // C. 未超过限制，追加到当前块
+                // 块未满 -> 继续累积
                 if (currentChunk.length() > 0) {
-                    currentChunk.append(separator); // 补回分隔符，保持语义连贯
+                    currentChunk.append(separator);
                 }
                 currentChunk.append(split);
             }
         }
 
-        // 处理最后一个遗留的块
+        // 补上最后一个块
         if (currentChunk.length() > 0) {
             goodSplits.add(currentChunk.toString());
         }
@@ -170,18 +156,15 @@ public class ChineseRecursiveTextSplitter extends TextSplitter {
     }
 
     /**
-     * 暴力切分：当没有任何分隔符可用，但文本依然超长时使用。
-     * 按固定长度强制截断，确保绝对不会报错。
+     * 当无任何分隔符可用时，按固定长度强制分割。
      */
     private List<String> bruteForceSplit(String text) {
         List<String> chunks = new ArrayList<>();
         int length = text.length();
         int start = 0;
-
         while (start < length) {
             int end = Math.min(start + chunkSize, length);
             chunks.add(text.substring(start, end));
-
             if (start + chunkSize >= length) {
                 break;
             }
