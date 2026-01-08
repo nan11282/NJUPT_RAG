@@ -29,13 +29,13 @@ spring:
     # 1. 自定义 DeepSeek 配置
     deepseek:
       base-url: https://api.deepseek.com
-      api-key: sk-96d1cf055bec4712bca304802d5a6520 # 填刚才验证过的
+      api-key: your own key# 填刚才验证过的
       chat-model: deepseek-chat
 
     # 2. 自定义 SiliconFlow 配置
     siliconflow:
       base-url: https://api.siliconflow.cn
-      api-key: sk-gpiqjshszflyacfvulvatsgbtbjteypknfjcdbwzyahoyiea # 填刚才验证过的
+      api-key: your own key # 填刚才验证过的
       embedding-model: BAAI/bge-m3
 
     # 3. 向量库配置 (通用)
