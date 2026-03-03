@@ -24,18 +24,27 @@ spring:
       hibernate:
         dialect: org.hibernate.dialect.PostgreSQLDialect
 
+  # Redis 配置
+  data:
+    redis:
+      host: localhost
+      port: 6379
+      password:
+      database: 0
+      timeout: 2000ms
+
   # 👇👇👇 这里的配置必须跟 AiConfig.java 里的 @ConfigurationProperties 对应 👇👇👇
   ai:
     # 1. 自定义 DeepSeek 配置
     deepseek:
       base-url: https://api.deepseek.com
-      api-key: your own key# 填刚才验证过的
+      api-key: your own key
       chat-model: deepseek-chat
 
     # 2. 自定义 SiliconFlow 配置
     siliconflow:
       base-url: https://api.siliconflow.cn
-      api-key: your own key # 填刚才验证过的
+      api-key: your own key
       embedding-model: BAAI/bge-m3
 
     # 3. 向量库配置 (通用)

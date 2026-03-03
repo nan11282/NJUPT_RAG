@@ -1,13 +1,13 @@
 package com.njupt.rag.service;
 
+import com.njupt.rag.vo.MessageVO;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
-import org.springframework.stereotype.Service;
+import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.chat.prompt.SystemPromptTemplate;
 import org.springframework.ai.document.Document;
-import org.springframework.ai.vectorstore.SearchRequest;
-import org.springframework.ai.vectorstore.VectorStore;
+import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 
 import java.util.List;
@@ -30,6 +30,9 @@ public class RagChatService {
 
     private final VectorStore vectorStore;
     private final ChatClient chatClient;
+    private final QueryRewriteService queryRewriteService;
+    private final HybridSearchService hybridSearchService;
+    private final ConversationHistoryService conversationHistoryService;
 
     /**
      * 定义了LLM的角色、任务和行为规范的系统提示模板。
@@ -52,57 +55,96 @@ public class RagChatService {
      * 处理非流式的聊天请求，一次性返回完整答案。
      *
      * @param userQuery 用户的原始问题
+     * @param sessionId 会话 ID
      * @return LLM生成的完整回答字符串
      */
-    public String chat(String userQuery) {
-        log.info("收到非流式聊天请求: '{}'", userQuery);
-        // 1. 检索相关文档
-        String documents = retrieveDocuments(userQuery);
-        // 2. 构建系统提示
-        var systemMessage = createSystemMessage(documents);
+    public String chat(String userQuery, String sessionId) {
+        log.info("收到非流式聊天请求: '{}', sessionId: '{}'", userQuery, sessionId);
+        // 1. 改写查询
+        String rewrittenQuery = queryRewriteService.rewriteQuery(userQuery);
+        // 2. 检索相关文档
+        String documents = retrieveDocuments(rewrittenQuery);
+        // 3. 获取会话历史
+        List<MessageVO> history = conversationHistoryService.getHistory(sessionId);
 
-        log.debug("调用LLM以获取完整回答...");
-        // 3. 调用LLM并返回结果
-        return chatClient.prompt()
-                .system(systemMessage.getContent())
-                .user(userQuery)
-                .call()
-                .content();
+        log.debug("调用LLM以获取完整回答，历史消息数: {}", history.size());
+        // 4. 构建完整 Prompt 并调用 LLM
+        Prompt prompt = buildPrompt(documents, history, userQuery);
+        String answer = chatClient.prompt(prompt).call().content();
+
+        // 5. 保存当前对话到历史
+        conversationHistoryService.addMessage(sessionId, MessageVO.user(userQuery));
+        conversationHistoryService.addMessage(sessionId, MessageVO.assistant(answer));
+
+        return answer;
     }
 
     /**
      * 处理流式聊天请求，通过SSE返回答案流。
      *
      * @param userQuery 用户的原始问题
+     * @param sessionId 会话 ID
      * @return 包含LLM生成内容的Flux流
      */
-    public Flux<String> streamChat(String userQuery) {
-        log.info("收到流式聊天请求: '{}'", userQuery);
-        // 1. 检索相关文档
-        String documents = retrieveDocuments(userQuery);
-        // 2. 构建系统提示
-        var systemMessage = createSystemMessage(documents);
+    public Flux<String> streamChat(String userQuery, String sessionId) {
+        log.info("收到流式聊天请求: '{}', sessionId: '{}'", userQuery, sessionId);
+        // 1. 改写查询
+        String rewrittenQuery = queryRewriteService.rewriteQuery(userQuery);
+        // 2. 检索相关文档
+        String documents = retrieveDocuments(rewrittenQuery);
+        // 3. 获取会话历史
+        List<MessageVO> history = conversationHistoryService.getHistory(sessionId);
 
-        log.debug("调用LLM以获取流式回答...");
-        // 3. 调用LLM并返回流式结果
-        return chatClient.prompt()
-                .system(systemMessage.getContent())
-                .user(userQuery)
+        log.debug("调用LLM以获取流式回答，历史消息数: {}", history.size());
+        // 4. 构建完整 Prompt
+        Prompt prompt = buildPrompt(documents, history, userQuery);
+
+        // 5. 调用LLM返回流式结果，并保存完整回答到历史
+        return chatClient.prompt(prompt)
                 .stream()
-                .content();
+                .content()
+                .doOnComplete(() -> {
+                    // 注意：流式响应时这里无法获取完整内容，
+                    // 实际应用中需要在前端拼接完整回答后通过另一个接口保存
+                    // 或者使用 buffer 收集流内容
+                    log.debug("流式回答完成，sessionId: {}", sessionId);
+                });
+    }
+
+    /**
+     * 保存流式聊天的完整回答。
+     *
+     * @param sessionId 会话 ID
+     * @param userQuery  用户问题
+     * @param answer     助手回答
+     */
+    public void saveStreamChatHistory(String sessionId, String userQuery, String answer) {
+        conversationHistoryService.addMessage(sessionId, MessageVO.user(userQuery));
+        conversationHistoryService.addMessage(sessionId, MessageVO.assistant(answer));
+        log.debug("流式聊天历史已保存，sessionId: {}", sessionId);
+    }
+
+    /**
+     * 清除会话历史。
+     *
+     * @param sessionId 会话 ID
+     */
+    public void clearHistory(String sessionId) {
+        conversationHistoryService.clearHistory(sessionId);
+        log.info("会话历史已清除，sessionId: {}", sessionId);
     }
 
     /**
      * 根据用户问题从向量数据库中检索最相关的文档片段。
+     * 使用混合检索（向量检索 + 全文检索 + RRF）。
      *
      * @param userQuery 用户问题
      * @return 拼接后的文档内容字符串，各文档间以换行符分隔
      */
     private String retrieveDocuments(String userQuery) {
-        // 设置检索请求，查询与用户问题最相似的TOP 4个文档片段
-        SearchRequest searchRequest = SearchRequest.query(userQuery).withTopK(4);
-        List<Document> similarDocuments = vectorStore.similaritySearch(searchRequest);
-        log.debug("为问题 '{}' 找到了 {} 个相关的文档片段。", userQuery, similarDocuments.size());
+        // 使用混合检索
+        List<Document> similarDocuments = hybridSearchService.hybridSearch(userQuery);
+        log.debug("为问题 '{}' 通过混合检索找到了 {} 个相关的文档片段。", userQuery, similarDocuments.size());
         // 将文档内容拼接成一个字符串，作为LLM的上下文
         return similarDocuments.stream()
                 .map(Document::getContent)
@@ -118,5 +160,43 @@ public class RagChatService {
     private org.springframework.ai.chat.messages.Message createSystemMessage(String documents) {
         SystemPromptTemplate systemPromptTemplate = new SystemPromptTemplate(SYSTEM_PROMPT);
         return systemPromptTemplate.createMessage(Map.of("documents", documents));
+    }
+
+    /**
+     * 构建完整的 Prompt，包含系统提示、历史对话和当前问题。
+     * Prompt 结构：[系统提示] + [历史对话] + [当前问题]
+     *
+     * @param documents 检索到的文档内容
+     * @param history   会话历史
+     * @param userQuery 当前用户问题
+     * @return 完整的 Prompt 对象
+     */
+    private Prompt buildPrompt(String documents, List<MessageVO> history, String userQuery) {
+        // 构建历史对话字符串
+        StringBuilder historyBuilder = new StringBuilder();
+        if (!history.isEmpty()) {
+            historyBuilder.append("\n\n【历史对话】\n");
+            for (MessageVO msg : history) {
+                if (MessageVO.ROLE_USER.equals(msg.getRole())) {
+                    historyBuilder.append("用户: ").append(msg.getContent()).append("\n");
+                } else {
+                    historyBuilder.append("助手: ").append(msg.getContent()).append("\n");
+                }
+            }
+        }
+
+        // 构建完整系统提示
+        SystemPromptTemplate systemPromptTemplate = new SystemPromptTemplate(SYSTEM_PROMPT);
+        org.springframework.ai.chat.messages.Message systemMessage = systemPromptTemplate.createMessage(
+                Map.of("documents", documents));
+
+        // 构建用户消息（历史对话 + 当前问题）
+        String userMessage = historyBuilder.toString() + "\n\n【当前问题】\n" + userQuery;
+
+        // 构建并返回 Prompt
+        return chatClient.prompt()
+                .system(systemMessage.getContent())
+                .user(userMessage)
+                .build();
     }
 }
