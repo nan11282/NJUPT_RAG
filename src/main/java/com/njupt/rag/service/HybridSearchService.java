@@ -1,0 +1,161 @@
+package com.njupt.rag.service;
+
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.ai.document.Document;
+import org.springframework.ai.vectorstore.SearchRequest;
+import org.springframework.ai.vectorstore.VectorStore;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.stereotype.Service;
+
+import java.util.*;
+import java.util.stream.Collectors;
+
+/**
+ * 混合检索服务。
+ * <p>
+ * 结合向量检索和全文检索，使用 RRF（Reciprocal Rank Fusion）算法合并结果。
+ * - 向量检索：基于语义相似度
+ * - 全文检索：基于关键词匹配（PostgreSQL tsvector）
+ * - RRF 算法：通过倒数排名融合两路结果
+ */
+@Slf4j
+@Service
+@RequiredArgsConstructor
+public class HybridSearchService {
+
+    private final VectorStore vectorStore;
+    private final JdbcTemplate jdbcTemplate;
+
+    private static final int VECTOR_SEARCH_TOP_K = 10;
+    private static final int FULLTEXT_SEARCH_TOP_K = 10;
+    private static final int FINAL_TOP_K = 3;
+    private static final double RRF_K = 60.0; // RRF 平常数，通常取 60
+
+    /**
+     * 执行混合检索。
+     *
+     * @param query 查询文本
+     * @return 合并后的 Top-K 文档列表
+     */
+    public List<Document> hybridSearch(String query) {
+        log.debug("开始混合检索，查询: '{}'", query);
+
+        // 1. 向量检索
+        List<Document> vectorResults = vectorSimilaritySearch(query);
+
+        // 2. 全文检索
+        List<Document> fullTextResults = fullTextSearch(query);
+
+        // 3. 使用 RRF 合并结果
+        List<Document> mergedResults = reciprocalRankFusion(vectorResults, fullTextResults);
+
+        // 4. 返回 Top-K
+        List<Document> finalResults = mergedResults.stream()
+                .limit(FINAL_TOP_K)
+                .collect(Collectors.toList());
+
+        log.debug("混合检索完成，返回 {} 个结果（向量检索: {}, 全文检索: {}）",
+                finalResults.size(), vectorResults.size(), fullTextResults.size());
+
+        return finalResults;
+    }
+
+    /**
+     * 向量相似度检索。
+     */
+    private List<Document> vectorSimilaritySearch(String query) {
+        SearchRequest searchRequest = SearchRequest.query(query)
+                .withTopK(VECTOR_SEARCH_TOP_K);
+        return vectorStore.similaritySearch(searchRequest);
+    }
+
+    /**
+     * 全文检索（使用 PostgreSQL tsvector）。
+     */
+    private List<Document> fullTextSearch(String query) {
+        try {
+            // 使用 plainto_tsquery 进行中文全文检索
+            String sql = """
+                    SELECT id, content, metadata
+                    FROM vector_store
+                    WHERE tsvector_content @@ plainto_tsquery('simple', ?)
+                    ORDER BY ts_rank(tsvector_content, plainto_tsquery('simple', ?)) DESC
+                    LIMIT ?
+                    """;
+
+            return jdbcTemplate.query(sql, rs -> {
+                List<Document> documents = new ArrayList<>();
+                while (rs.next()) {
+                    String id = rs.getString("id");
+                    String content = rs.getString("content");
+                    String metadataJson = rs.getString("metadata");
+
+                    Map<String, Object> metadata = new HashMap<>();
+                    if (metadataJson != null && !metadataJson.isEmpty()) {
+                        // 简单的 JSON 解析，对于复杂场景可以使用 Jackson
+                        metadata.put("raw_metadata", metadataJson);
+                    }
+                    metadata.put("id", id);
+
+                    documents.add(new Document(content, metadata));
+                }
+                return documents;
+            }, query, query, FULLTEXT_SEARCH_TOP_K);
+
+        } catch (Exception e) {
+            log.error("全文检索失败，返回空结果。错误: {}", e.getMessage(), e);
+            return Collections.emptyList();
+        }
+    }
+
+    /**
+     * RRF（Reciprocal Rank Fusion）算法合并两路检索结果。
+     * <p>
+     * 公式：score = sum(1 / (k + rank))，其中 k 是平衡常数，rank 是文档在各列表中的排名
+     *
+     * @param list1 第一路结果列表
+     * @param list2 第二路结果列表
+     * @return 按融合分数排序后的文档列表
+     */
+    private List<Document> reciprocalRankFusion(List<Document> list1, List<Document> list2) {
+        // 使用文档内容作为 key（简化处理，实际应用中可用唯一 ID）
+        Map<String, Double> scores = new HashMap<>();
+        Map<String, Document> documentMap = new HashMap<>();
+
+        // 处理第一路结果
+        for (int i = 0; i < list1.size(); i++) {
+            Document doc = list1.get(i);
+            String key = getDocumentKey(doc);
+            scores.put(key, scores.getOrDefault(key, 0.0) + 1.0 / (RRF_K + i + 1));
+            documentMap.put(key, doc);
+        }
+
+        // 处理第二路结果
+        for (int i = 0; i < list2.size(); i++) {
+            Document doc = list2.get(i);
+            String key = getDocumentKey(doc);
+            scores.put(key, scores.getOrDefault(key, 0.0) + 1.0 / (RRF_K + i + 1));
+            documentMap.put(key, doc);
+        }
+
+        // 按分数排序
+        return scores.entrySet().stream()
+                .sorted(Map.Entry.<String, Double>comparingByValue().reversed())
+                .map(entry -> documentMap.get(entry.getKey()))
+                .collect(Collectors.toList());
+    }
+
+    /**
+     * 获取文档的唯一标识 key。
+     * 优先使用 metadata 中的 id，否则使用 content 的 hash
+     */
+    private String getDocumentKey(Document doc) {
+        Object id = doc.getMetadata().get("id");
+        if (id != null) {
+            return String.valueOf(id);
+        }
+        // 使用 content 作为 fallback key
+        return String.valueOf(doc.getContent().hashCode());
+    }
+}
