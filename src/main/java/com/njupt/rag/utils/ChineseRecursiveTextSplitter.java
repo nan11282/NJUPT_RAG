@@ -83,39 +83,60 @@ public class ChineseRecursiveTextSplitter extends TextSplitter {
 
     /**
      * 递归切分核心方法。
+     * <p>
+     * 核心改进：实现 chunkOverlap 功能，在保存块时保留最后 chunkOverlap 个字符作为下一个块的前缀。
      */
     private List<String> splitText(String text, List<String> separators) {
+        return splitText(text, separators, "");
+    }
+
+    /**
+     * 递归切分核心方法（带重叠前缀）。
+     *
+     * @param text           要切分的文本
+     * @param separators     可用的分隔符列表（按优先级排序）
+     * @param overlapPrefix  上一个块的重叠部分（作为当前块的前缀）
+     * @return 切分后的文本块列表
+     */
+    private List<String> splitText(String text, List<String> separators, String overlapPrefix) {
         List<String> finalChunks = new ArrayList<>();
 
-        // 1. 终止条件：文本已足够短
-        if (text.length() <= chunkSize) {
-            finalChunks.add(text);
+        // 1. 如果有重叠前缀，先加到文本前面
+        String effectiveText = overlapPrefix + text;
+
+        // 2. 终止条件：文本已足够短
+        if (effectiveText.length() <= chunkSize) {
+            finalChunks.add(effectiveText);
             return finalChunks;
         }
 
-        // 2. 选择当前可用分隔符中，文本内首次出现的分隔符
+        // 3. 选择当前可用分隔符中，文本内首次出现的分隔符
         String separator = null;
         List<String> nextSeparators = new ArrayList<>();
         for (int i = 0; i < separators.size(); i++) {
             String s = separators.get(i);
-            if (text.contains(s)) {
+            // 注意：在 effectiveText 中查找分隔符，但需要跳过 overlapPrefix 部分
+            int idx = effectiveText.indexOf(s, overlapPrefix.length());
+            if (idx >= 0) {
                 separator = s;
                 nextSeparators = separators.subList(i + 1, separators.size());
                 break;
             }
         }
 
-        // 3. 无分隔符可用：兜底暴力切分
+        // 4. 无分隔符可用：兜底暴力切分
         if (separator == null) {
-            return bruteForceSplit(text);
+            return bruteForceSplit(effectiveText);
         }
 
-        // 4. 使用找到的分隔符进行初步切分
-        String[] rawSplits = text.split(Pattern.quote(separator));
+        // 5. 使用找到的分隔符进行初步切分
+        // 注意：只切分 overlapPrefix 之后的部分
+        String textToSplit = effectiveText.substring(overlapPrefix.length());
+        String[] rawSplits = textToSplit.split(Pattern.quote(separator));
 
-        // 5. 合并碎片，确保每块尽可能接近 chunkSize
+        // 6. 合并碎片，确保每块尽可能接近 chunkSize
         List<String> goodSplits = new ArrayList<>();
-        StringBuilder currentChunk = new StringBuilder();
+        StringBuilder currentChunk = new StringBuilder(overlapPrefix);
 
         for (String split : rawSplits) {
             if (split.isEmpty() && currentChunk.length() > 0) {
@@ -126,16 +147,33 @@ public class ChineseRecursiveTextSplitter extends TextSplitter {
             }
 
             if (currentChunk.length() + separator.length() + split.length() > chunkSize) {
-                // 当前块已满 -> 先保存
+                // 当前块已满 -> 先保存（保留最后 chunkOverlap 个字符作为重叠）
                 if (currentChunk.length() > 0) {
-                    goodSplits.add(currentChunk.toString());
+                    String chunkToSave = currentChunk.toString();
+                    goodSplits.add(chunkToSave);
+
+                    // 提取重叠部分：最后 chunkOverlap 个字符
+                    String nextOverlap = "";
+                    if (chunkOverlap > 0 && chunkToSave.length() > chunkOverlap) {
+                        nextOverlap = chunkToSave.substring(chunkToSave.length() - chunkOverlap);
+                    }
+
+                    // 清空当前块，准备下一个
                     currentChunk.setLength(0);
+                    currentChunk.append(nextOverlap);
                 }
 
                 // 超长片段 -> 递归继续切
                 if (split.length() > chunkSize) {
-                    goodSplits.addAll(splitText(split, nextSeparators));
+                    // 递归调用时，传入当前的重叠前缀
+                    List<String> recursiveChunks = splitText(split, nextSeparators, currentChunk.toString());
+                    goodSplits.addAll(recursiveChunks);
+                    currentChunk.setLength(0);  // 递归处理完了，清空
                 } else {
+                    // 非超长片段 -> 直接添加到当前块
+                    if (currentChunk.length() > 0) {
+                        currentChunk.append(separator);
+                    }
                     currentChunk.append(split);
                 }
             } else {
