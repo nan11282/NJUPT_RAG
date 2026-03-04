@@ -17,9 +17,9 @@
 
         .chat-container {
             width: 100%;
-            max-width: 800px;
+            max-width: 900px;
             background: white;
-            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
             display: flex;
             flex-direction: column;
             height: 100%;
@@ -37,11 +37,6 @@
             align-items: center;
         }
 
-        .header .title {
-            flex-grow: 1;
-            text-align: center;
-        }
-
         .header .nav-links a {
             color: white;
             text-decoration: none;
@@ -49,11 +44,31 @@
             font-size: 0.8em;
         }
 
+        .document-selector {
+            background-color: #fff;
+            padding: 10px 15px;
+            border-bottom: 1px solid #e0e0e0;
+        }
+
+        .document-selector label {
+            color: #666;
+            font-size: 0.9em;
+            margin-right: 10px;
+        }
+
+        .document-selector select {
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 0.9em;
+            min-width: 200px;
+            cursor: pointer;
+        }
+
         .chat-box {
             flex: 1;
             padding: 20px;
             overflow-y: auto;
-            border-bottom: 1px solid #ddd;
         }
 
         .message {
@@ -104,12 +119,13 @@
             display: flex;
             gap: 10px;
             background: #fff;
+            border-top: 1px solid #e0e0e0;
         }
 
         input[type="text"] {
             flex: 1;
             padding: 12px;
-            border: 1px solid #ddd;
+            border: 1. solid #ddd;
             border-radius: 25px;
             outline: none;
             font-size: 16px;
@@ -137,7 +153,6 @@
     </style>
 </head>
 <body>
-
 <div class="chat-container">
     <div class="header">
         <div class="nav-links"></div>
@@ -147,9 +162,18 @@
         </div>
     </div>
 
+    <!-- 👈 新增：文档选择器 -->
+    <div class="document-selector">
+        <label for="document-select">📄 选择你的培养方案：</label>
+        <select id="document-select">
+            <option value="">全部文档</option>
+            <!-- 文档列表将通过 JavaScript 动态加载 -->
+        </select>
+    </div>
+
     <div class="chat-box" id="chatBox">
         <div class="message ai">
-            <div class="bubble">你好！我是计算机学院的 AI 助手，关于培养方案、课程学分的问题都可以问我哦~</div>
+            <div class="bubble">你好！我是柚子助手，关于保研、选课或培养方案的问题都可以问我哦~</div>
         </div>
     </div>
 
@@ -163,6 +187,7 @@
     const chatBox = document.getElementById('chatBox');
     const questionInput = document.getElementById('questionInput');
     const sendBtn = document.getElementById('sendBtn');
+    const documentSelect = document.getElementById('document-select');
     const credentials = sessionStorage.getItem('credentials');
 
     // 登录检查
@@ -171,6 +196,7 @@
             window.location.href = '/login.html';
             return;
         }
+
         const username = sessionStorage.getItem('username');
         if (username === 'admin') {
             const nav = document.querySelector('.header .nav-links');
@@ -179,7 +205,35 @@
             adminLink.textContent = '管理后台';
             nav.appendChild(adminLink);
         }
+
+        // 👈 新增：加载文档列表
+        loadDocumentList();
     };
+
+    // 👈 新增：从后端加载文档列表
+    function loadDocumentList() {
+        fetch('/api/document/list', {
+            headers: {
+                'Authorization': 'Basic ' + credentials
+            }
+        })
+        .then(response => response.json())
+        .then(documents => {
+            // 清空现有选项（保留"全部文档"）
+            documentSelect.innerHTML = '<option value="">全部文档</option>';
+
+            // 动态添加文档选项
+            documents.forEach(doc => {
+                const option = document.createElement('option');
+                option.value = doc.filename;
+                option.textContent = doc.name;
+                documentSelect.appendChild(option);
+            });
+        })
+        .catch(error => {
+            console.error('加载文档列表失败:', error);
+        });
+    }
 
     function sendQuestion() {
         const question = questionInput.value.trim();
@@ -192,10 +246,19 @@
         const aiBubble = appendMessage('ai', 'Thinking...');
         let fullText = "";
 
+        // 👈 新增：获取选中的文档
+        const targetDocument = documentSelect.value;
+
         const headers = new Headers();
         headers.append('Authorization', 'Basic ' + credentials);
 
-        fetch(`/api/chat/stream?question=${encodeURIComponent(question)}`, { headers: headers })
+        // 👈 新增：在 URL 中添加文档过滤参数
+        let url = `/api/chat/stream?question=${encodeURIComponent(question)}`;
+        if (targetDocument) {
+            url += `&targetDocument=${encodeURIComponent(targetDocument)}`;
+        }
+
+        fetch(url, { headers: headers })
             .then(response => {
                 if (!response.ok) {
                     throw new Error(`HTTP error! status: ${response.status}`);
@@ -215,7 +278,7 @@
                             aiBubble.innerHTML = "";
                             isFirstChunk = false;
                         }
-                        
+
                         // SSE format is "data: ...\n\n". We need to parse it.
                         const chunk = decoder.decode(value, { stream: true });
                         const lines = chunk.split('\n');
@@ -227,7 +290,7 @@
 
                         aiBubble.innerHTML = marked.parse(fullText);
                         chatBox.scrollTop = chatBox.scrollHeight;
-                        
+
                         read(); // Continue reading
                     });
                 }

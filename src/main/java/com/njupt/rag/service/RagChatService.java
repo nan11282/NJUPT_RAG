@@ -7,6 +7,7 @@ import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.chat.prompt.SystemPromptTemplate;
 import org.springframework.ai.document.Document;
+import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 
@@ -22,6 +23,9 @@ import java.util.stream.Collectors;
  * 2. 在向量数据库中检索相关文档片段（知识库）。
  * 3. 将检索到的文档作为上下文，构建一个精确的系统提示（System Prompt）。
  * 4. 调用LLM，基于提供的上下文和用户问题生成回答。
+ * <p>
+ * 新增功能：
+ * - 支持文档过滤，通过 targetDocument 参数指定检索范围
  */
 @Slf4j
 @Service
@@ -41,11 +45,11 @@ public class RagChatService {
      * - 行为规范: 强调回答的严谨性、风格的亲切性，并要求在适当时使用Markdown格式。
      */
     private static final String SYSTEM_PROMPT = """
-            角色: 你叫“柚子助手”, 是南京邮电大学的AI学长。
+            角色: 你叫"柚子助手", 是南京邮电大学的AI学长。
             任务: 基于以下提供的[背景信息](Context)回答同学关于保研、选课或学校政策的问题。
             规范:
-            1. 严谨性: 如果Context里没有提及, 请直接说“相关文件里没找到”, 严禁编造。
-            2. 风格: 亲切、鼓励, 使用南邮同学懂的黑话(如“通达”, “三牌楼”, “仙林”)。
+            1. 严谨性: 如果Context里没有提及, 请直接说"相关文件里没找到", 严禁编造。
+            2. 风格: 亲切、鼓励, 使用南邮同学懂的黑话(如"通达", "三牌楼", "仙林")。
             3. 格式: 如果涉及复杂的政策(如保研条件), 请用 Markdown 列表清晰展示。
             背景信息:
             {documents}
@@ -53,21 +57,28 @@ public class RagChatService {
 
     /**
      * 处理非流式的聊天请求，一次性返回完整答案。
+     * 支持文档过滤，通过 targetDocument 参数指定检索范围。
      *
-     * @param userQuery 用户的原始问题
-     * @param sessionId 会话 ID
+     * @param userQuery       用户的原始问题
+     * @param sessionId       会话 ID
+     * @param targetDocument   目标文档文件名（可选，如"2023级计算机学院培养方案.pdf"）
      * @return LLM生成的完整回答字符串
      */
-    public String chat(String userQuery, String sessionId) {
-        log.info("收到非流式聊天请求: '{}', sessionId: '{}'", userQuery, sessionId);
+    public String chat(String userQuery, String sessionId, String targetDocument) {
+        log.info("收到非流式聊天请求: '{}', sessionId: '{}', targetDocument: '{}'",
+            userQuery, sessionId, targetDocument);
+
         // 1. 改写查询
         String rewrittenQuery = queryRewriteService.rewriteQuery(userQuery);
-        // 2. 检索相关文档
-        String documents = retrieveDocuments(rewrittenQuery);
+
+        // 2. 检索相关文档（传入文档过滤参数）
+        String documents = retrieveDocuments(rewrittenQuery, targetDocument);
+
         // 3. 获取会话历史
         List<MessageVO> history = conversationHistoryService.getHistory(sessionId);
 
         log.debug("调用LLM以获取完整回答，历史消息数: {}", history.size());
+
         // 4. 构建完整 Prompt 并调用 LLM
         Prompt prompt = buildPrompt(documents, history, userQuery);
         String answer = chatClient.prompt(prompt).call().content();
@@ -81,21 +92,28 @@ public class RagChatService {
 
     /**
      * 处理流式聊天请求，通过SSE返回答案流。
+     * 支持文档过滤，通过 targetDocument 参数指定检索范围。
      *
-     * @param userQuery 用户的原始问题
-     * @param sessionId 会话 ID
+     * @param userQuery       用户的原始问题
+     * @param sessionId       会话 ID
+     * @param targetDocument   目标文档文件名（可选，如"2023级计算机学院培养方案.pdf"）
      * @return 包含LLM生成内容的Flux流
      */
-    public Flux<String> streamChat(String userQuery, String sessionId) {
-        log.info("收到流式聊天请求: '{}', sessionId: '{}'", userQuery, sessionId);
+    public Flux<String> streamChat(String userQuery, String sessionId, String targetDocument) {
+        log.info("收到流式聊天请求: '{}', sessionId: '{}', targetDocument: '{}'",
+            userQuery, sessionId, targetDocument);
+
         // 1. 改写查询
         String rewrittenQuery = queryRewriteService.rewriteQuery(userQuery);
-        // 2. 检索相关文档
-        String documents = retrieveDocuments(rewrittenQuery);
+
+        // 2. 检索相关文档（传入文档过滤参数）
+        String documents = retrieveDocuments(rewrittenQuery, targetDocument);
+
         // 3. 获取会话历史
         List<MessageVO> history = conversationHistoryService.getHistory(sessionId);
 
         log.debug("调用LLM以获取流式回答，历史消息数: {}", history.size());
+
         // 4. 构建完整 Prompt
         Prompt prompt = buildPrompt(documents, history, userQuery);
 
@@ -137,14 +155,19 @@ public class RagChatService {
     /**
      * 根据用户问题从向量数据库中检索最相关的文档片段。
      * 使用混合检索（向量检索 + 全文检索 + RRF）。
+     * 支持文档过滤。
      *
-     * @param userQuery 用户问题
+     * @param userQuery       用户问题
+     * @param targetDocument   目标文档文件名（可选）
      * @return 拼接后的文档内容字符串，各文档间以换行符分隔
      */
-    private String retrieveDocuments(String userQuery) {
-        // 使用混合检索
-        List<Document> similarDocuments = hybridSearchService.hybridSearch(userQuery);
-        log.debug("为问题 '{}' 通过混合检索找到了 {} 个相关的文档片段。", userQuery, similarDocuments.size());
+    private String retrieveDocuments(String userQuery, String targetDocument) {
+        // 使用混合检索（传入文档过滤参数）
+        List<Document> similarDocuments = hybridSearchService.hybridSearch(userQuery, targetDocument);
+
+        log.debug("为问题 '{}' 通过混合检索找到了 {} 个相关的文档片段（targetDocument: {}）",
+            userQuery, similarDocuments.size(), targetDocument);
+
         // 将文档内容拼接成一个字符串，作为LLM的上下文
         return similarDocuments.stream()
                 .map(Document::getContent)

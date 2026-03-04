@@ -54,6 +54,28 @@ spring:
         initialize-schema: false
         index-type: HNSW
 
+# 👇👇👇 文档配置 👇👇👇
+# 用于配置可用的文档列表，支持用户选择自己的学院培养方案
+njupter:
+  documents:
+    # 培养方案
+    - filename: "2023级计算机学院培养方案.pdf"
+      name: "计算机学院"
+      category: "培养方案"
+    - filename: "2023级通信学院培养方案.pdf"
+      name: "通信与信息工程学院"
+      category: "培养方案"
+    - filename: "2023级电子学院培养方案.pdf"
+      name: "电子与光学工程学院"
+      category: "培养方案"
+    # 政策文档
+    - filename: "保研政策.pdf"
+      name: "保研政策"
+      category: "政策"
+    - filename: "选课指南.pdf"
+      name: "选课指南"
+      category: "指南"
+
 logging:
   level:
     org.springframework.web.client.RestClient: DEBUG # 👈 开启 REST 客户端日志

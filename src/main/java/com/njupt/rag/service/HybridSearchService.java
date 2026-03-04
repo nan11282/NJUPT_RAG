@@ -18,6 +18,10 @@ import java.util.stream.Collectors;
  * - 向量检索：基于语义相似度
  * - 全文检索：基于关键词匹配（PostgreSQL tsvector）
  * - RRF 算法：通过倒数排名融合两路结果
+ * <p>
+ * 新增功能：
+ * - 支持文档过滤（通过 metadata.filename 字段）
+ * - 可指定检索范围，提高多文档场景下的检索精度
  */
 @Slf4j
 @Service
@@ -34,18 +38,20 @@ public class HybridSearchService {
 
     /**
      * 执行混合检索。
+     * 支持文档过滤，通过 targetDocument 参数指定检索范围。
      *
-     * @param query 查询文本
+     * @param query           查询文本
+     * @param targetDocument   目标文档文件名（可选，如"2023级计算机学院培养方案.pdf"）
      * @return 合并后的 Top-K 文档列表
      */
-    public List<Document> hybridSearch(String query) {
-        log.debug("开始混合检索，查询: '{}'", query);
+    public List<Document> hybridSearch(String query, String targetDocument) {
+        log.debug("开始混合检索，查询: '{}', targetDocument: '{}'", query, targetDocument);
 
-        // 1. 向量检索
-        List<Document> vectorResults = vectorSimilaritySearch(query);
+        // 1. 向量检索（带文档过滤）
+        List<Document> vectorResults = vectorSimilaritySearch(query, targetDocument);
 
-        // 2. 全文检索
-        List<Document> fullTextResults = fullTextSearch(query);
+        // 2. 全文检索（带文档过滤）
+        List<Document> fullTextResults = fullTextSearch(query, targetDocument);
 
         // 3. 使用 RRF 合并结果
         List<Document> mergedResults = reciprocalRankFusion(vectorResults, fullTextResults);
@@ -63,26 +69,61 @@ public class HybridSearchService {
 
     /**
      * 向量相似度检索。
+     * 支持文档过滤，通过 filterExpression 实现。
+     *
+     * @param query           查询文本
+     * @param targetDocument   目标文档文件名（可选）
+     * @return 检索结果列表
      */
-    private List<Document> vectorSimilaritySearch(String query) {
+    private List<Document> vectorSimilaritySearch(String query, String targetDocument) {
         SearchRequest searchRequest = SearchRequest.query(query)
                 .withTopK(VECTOR_SEARCH_TOP_K);
+
+        // 如果有文档过滤，添加过滤条件
+        if (targetDocument != null && !targetDocument.isEmpty()) {
+            // 使用 metadata.filename 进行过滤
+            String filterExpression = "metadata['filename'] == '" + targetDocument + "'";
+            searchRequest = searchRequest.withFilterExpression(filterExpression);
+            log.debug("向量检索添加过滤条件: {}", filterExpression);
+        }
+
         return vectorStore.similaritySearch(searchRequest);
     }
 
     /**
      * 全文检索（使用 PostgreSQL tsvector）。
+     * 支持文档过滤，通过 SQL WHERE 条件实现。
+     *
+     * @param query           查询文本
+     * @param targetDocument   目标文档文件名（可选）
+     * @return 检索结果列表
      */
-    private List<Document> fullTextSearch(String query) {
+    private List<Document> fullTextSearch(String query, String targetDocument) {
         try {
-            // 使用 plainto_tsquery 进行中文全文检索
-            String sql = """
-                    SELECT id, content, metadata
-                    FROM vector_store
-                    WHERE tsvector_content @@ plainto_tsquery('simple', ?)
-                    ORDER BY ts_rank(tsvector_content, plainto_tsquery('simple', ?)) DESC
-                    LIMIT ?
-                    """;
+            String sql;
+
+            // 根据是否有文档过滤，选择不同的 SQL
+            if (targetDocument != null && !targetDocument.isEmpty()) {
+                // 有文档过滤：添加 WHERE 条件
+                sql = """
+                        SELECT id, content, metadata
+                        FROM vector_store
+                        WHERE metadata->>'filename' = ?
+                          AND tsvector_content @@ plainto_tsquery('simple', ?)
+                        ORDER BY ts_rank(tsvector_content, plainto_tsquery('simple', ?)) DESC
+                        LIMIT ?
+                        """;
+                log.debug("全文检索使用文档过滤: {}", targetDocument);
+            } else {
+                // 没有文档过滤：全部检索
+                sql = """
+                        SELECT id, content, metadata
+                        FROM vector_store
+                        WHERE tsvector_content @@ plainto_tsquery('simple', ?)
+                        ORDER BY ts_rank(tsvector_content, plainto_tsquery('simple', ?)) DESC
+                        LIMIT ?
+                        """;
+            }
 
             return jdbcTemplate.query(sql, rs -> {
                 List<Document> documents = new ArrayList<>();
@@ -101,11 +142,30 @@ public class HybridSearchService {
                     documents.add(new Document(content, metadata));
                 }
                 return documents;
-            }, query, query, FULLTEXT_SEARCH_TOP_K);
+            }, buildQueryParameters(sql, targetDocument, query));
 
         } catch (Exception e) {
             log.error("全文检索失败，返回空结果。错误: {}", e.getMessage(), e);
             return Collections.emptyList();
+        }
+    }
+
+    /**
+     * 构建 SQL 查询参数。
+     * 根据是否有文档过滤，返回不同的参数顺序。
+     *
+     * @param sql            SQL 语句
+     * @param targetDocument  目标文档文件名
+     * @param query          查询文本
+     * @return 查询参数数组
+     */
+    private Object[] buildQueryParameters(String sql, String targetDocument, String query) {
+        if (targetDocument != null && !targetDocument.isEmpty() && sql.contains("metadata->>'filename'")) {
+            // 有文档过滤：参数顺序为 filename, query, query, limit
+            return new Object[]{targetDocument, query, query, FULLTEXT_SEARCH_TOP_K};
+        } else {
+            // 没有文档过滤：参数顺序为 query, query, limit
+            return new Object[]{query, query, FULLTEXT_SEARCH_TOP_K};
         }
     }
 

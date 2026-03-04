@@ -1,5 +1,6 @@
 package com.njupt.rag.controller;
 
+import com.njupt.rag.config.DocumentConfig;
 import com.njupt.rag.service.DocumentIngestionService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -8,21 +9,37 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.util.List;
 import java.util.Map;
 
 /**
  * 文档管理相关的API端点。
  * <p>
- * 专用于处理知识库文档的上传操作。
+ * 1. 提供文档列表，支持用户选择自己的学院培养方案
+ * 2. 支持文档上传操作
  */
 @Slf4j
 @RestController
-@RequestMapping("/api/documents")
+@RequestMapping("/api/document")
 @RequiredArgsConstructor
-@CrossOrigin(origins = "*") // 允许所有来源的跨域请求，方便前后端分离开发和调试
+@CrossOrigin(origins = "*")
 public class DocumentController {
 
     private final DocumentIngestionService documentIngestionService;
+    private final DocumentConfig documentConfig;
+
+    /**
+     * 获取所有可用的文档列表。
+     * <p>
+     * 从 application.yml 的 njupter.documents 配置中读取。
+     * 前端使用此接口动态渲染文档选择下拉框。
+     *
+     * @return 文档信息列表
+     */
+    @GetMapping("/list")
+    public List<DocumentConfig.DocumentInfo> getDocumentList() {
+        return documentConfig.getItems();
+    }
 
     /**
      * 接收并处理上传的文档文件。
