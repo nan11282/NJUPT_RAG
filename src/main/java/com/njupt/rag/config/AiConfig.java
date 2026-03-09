@@ -3,6 +3,7 @@ package com.njupt.rag.config;
 import lombok.Getter;
 import lombok.Setter;
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.document.MetadataMode;
 import org.springframework.ai.embedding.EmbeddingModel;
@@ -14,6 +15,7 @@ import org.springframework.ai.openai.api.OpenAiApi;
 import org.springframework.ai.vectorstore.PgVectorStore;
 import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.util.StringUtils;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Primary;
@@ -79,18 +81,22 @@ public class AiConfig {
      *
      * @param jdbcTemplate   用于数据库操作的 Spring JDBC 模板
      * @param embeddingModel 用于生成文档向量的嵌入模型
+     * @param properties     VectorStore 配置属性
      * @return PgVectorStore 实例
      */
     @Bean
-    public VectorStore vectorStore(JdbcTemplate jdbcTemplate, EmbeddingModel embeddingModel) {
+    public VectorStore vectorStore(
+            JdbcTemplate jdbcTemplate,
+            EmbeddingModel embeddingModel,
+            VectorStoreProperties properties) {
         return new PgVectorStore(
                 jdbcTemplate,
                 embeddingModel,
-                1024, // 向量维度，与 embeddingModel 保持一致
-                PgVectorStore.PgDistanceType.COSINE_DISTANCE, // 使用余弦距离进行相似度计算
-                false, // 在生产环境中，不应在每次启动时删除并重建表
-                PgVectorStore.PgIndexType.HNSW, // 使用 HNSW 索引以优化检索性能
-                true // 自动初始化数据库 schema (如果表不存在则创建)
+                properties.getDimensions(), // 从 YAML 配置读取向量维度
+                properties.getDistanceTypeEnum(), // 从 YAML 配置读取距离类型
+                properties.isRemoveExistingVectorStoreTable(), // 从 YAML 配置读取是否重建表
+                properties.getIndexTypeEnum(), // 从 YAML 配置读取索引类型
+                properties.isInitializeSchema() // 从 YAML 配置读取是否初始化 schema
         );
     }
 
@@ -120,5 +126,78 @@ public class AiConfig {
         private String baseUrl = "https://api.siliconflow.cn/v1";
         private String apiKey;
         private String embeddingModel = "BAAI/bge-m3";
+    }
+
+    /**
+     * VectorStore 配置属性类。
+     * 从 application.yml 文件中读取 `spring.ai.vectorstore.pgvector` 前缀的配置。
+     * 用于控制向量数据库的连接、维度、索引等参数。
+     * @ConfigurationProperties 会自动将 YAML 中的配置绑定到这些字段。
+     */
+    @Setter
+    @Getter
+    @Component
+    @ConfigurationProperties(prefix = "spring.ai.vectorstore.pgvector")
+    public static class VectorStoreProperties {
+        /**
+         * 向量维度，必须与嵌入模型的维度一致
+         */
+        private int dimensions;
+
+        /**
+         * 是否自动初始化数据库 schema（如果表不存在则创建）
+         */
+        private boolean initializeSchema;
+
+        /**
+         * 是否在启动时删除并重建表（生产环境应设置为 false）
+         */
+        private boolean removeExistingVectorStoreTable;
+
+        /**
+         * 索引类型：IVFFLAT（简单但性能一般）或 HNSW（高性能但内存占用大）
+         */
+        private String indexType;
+
+        /**
+         * 距离计算类型：COSINE_DISTANCE（余弦距离）或 EUCLIDEAN_DISTANCE（欧氏距离）
+         */
+        private String distanceType;
+
+        /**
+         * 获取索引类型枚举值
+         */
+        public PgVectorStore.PgIndexType getIndexTypeEnum() {
+            if (!StringUtils.hasText(indexType)) {
+                return PgVectorStore.PgIndexType.HNSW;
+            }
+            String normalized = indexType.toUpperCase();
+            for (PgVectorStore.PgIndexType type : PgVectorStore.PgIndexType.values()) {
+                if (type.name().equals(normalized)) {
+                    return type;
+                }
+            }
+            return PgVectorStore.PgIndexType.HNSW;
+        }
+
+        /**
+         * 获取距离类型枚举值，处理大小写和格式差异
+         *
+         * @return PgDistanceType 枚举
+         */
+        public PgVectorStore.PgDistanceType getDistanceTypeEnum() {
+            if (!StringUtils.hasText(distanceType)) {
+                return PgVectorStore.PgDistanceType.COSINE_DISTANCE;
+            }
+
+            String normalized = distanceType.toUpperCase().replace("-", "_");
+            for (PgVectorStore.PgDistanceType type : PgVectorStore.PgDistanceType.values()) {
+                if (type.name().equals(normalized)) {
+                    return type;
+                }
+            }
+
+            return PgVectorStore.PgDistanceType.COSINE_DISTANCE;
+        }
     }
 }

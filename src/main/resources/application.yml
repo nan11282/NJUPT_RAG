@@ -51,12 +51,25 @@ spring:
     vectorstore:
       pgvector:
         dimensions: 1024
-        initialize-schema: false
+        initialize-schema: true
+        remove-existing-vector-store-table: false
         index-type: HNSW
+        distance-type: COSINE_DISTANCE
 
 # 👇👇👇 文档配置 👇👇👇
-# 用于配置可用的文档列表，支持用户选择自己的学院培养方案
 njupter:
+  # 文档存储目录配置，支持多个路径（逗号分隔）
+  # 支持相对路径（相对于项目根目录）和绝对路径
+  # 特殊值 'classpath'：从 classpath 扫描（打包后的 JAR 内）
+  # 特殊值 'classpath*'：从所有 classpath 扫描（包括依赖包）
+  # 示例：
+  #   - classpath*:data/*.pdf          # 从 classpath 扫描（默认）
+  #   - file:./data/*.pdf             # 从项目根目录的 data 文件夹扫描
+  #   - file:/var/njupter/data/*.pdf   # 从绝对路径扫描
+  #   - classpath*:data/*.pdf,file:./data/*.pdf  # 同时扫描多个位置
+  document-paths: "classpath*:data/*.pdf,file:./data/*.pdf"
+
+  # 可用的文档列表，支持用户选择自己的学院培养方案
   documents:
     # 培养方案
     - filename: "2023级计算机学院培养方案.pdf"
@@ -76,7 +89,48 @@ njupter:
       name: "选课指南"
       category: "指南"
 
-logging:
-  level:
-    org.springframework.web.client.RestClient: DEBUG # 👈 开启 REST 客户端日志
-    org.springframework.ai.openai.api: DEBUG         # 👈 开启 OpenAI API 内部日志
+# 👇👇👇 日志配置 👇👇👇
+# 使用 logback-spring.xml 配置，这里只配置邮件服务器
+njupter:
+  logging:
+    # 日志文件存放路径
+    path: "logs"
+    # 日志文件名（不含扩展名）
+    file-name: "njupter"
+    # 单个日志文件最大大小
+    max-file-size: "100MB"
+    # 保留的历史日志文件数量
+    max-history: "30"
+    # 邮件通知配置
+    mail:
+      # 是否启用邮件通知
+      enabled: "true"
+      # 接收告警邮件的地址（多个用逗号分隔）
+      to: "your-email@example.com"
+      # 发件人地址
+      from: "noreply@njupter.com"
+      # 邮件主题
+      subject: "【NJUPTer 系统告警】发生 ERROR 级别错误"
+
+# 👇👇👇 邮件服务器配置 👇👇👇
+# 当 njupter.logging.mail.enabled=true 时生效
+spring:
+  mail:
+    host: "smtp.example.com"
+    port: 587
+    username: "your-email@example.com"
+    password: "your-email-password"
+    protocol: smtp
+    properties:
+      mail:
+        smtp:
+          auth: "true"
+          starttls:
+            enable: "true"
+            required: "false"
+
+# logging 配置已由 logback-spring.xml 接管，此处保留作为参考
+# logging:
+#   level:
+#     org.springframework.web.client.RestClient: DEBUG
+#     org.springframework.ai.openai.api: DEBUG

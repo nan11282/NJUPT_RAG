@@ -1,5 +1,7 @@
 package com.njupt.rag.service;
 
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.document.Document;
@@ -82,7 +84,9 @@ public class HybridSearchService {
         // 如果有文档过滤，添加过滤条件
         if (targetDocument != null && !targetDocument.isEmpty()) {
             // 使用 metadata.filename 进行过滤
-            String filterExpression = "metadata['filename'] == '" + targetDocument + "'";
+            // 注意：这里使用的是 Spring AI 的 filter expression 语法，不是 SQL
+            // Spring AI 会将其转换为安全的参数化查询
+            String filterExpression = String.format("metadata['filename'] == '%s'", targetDocument.replace("'", "''"));
             searchRequest = searchRequest.withFilterExpression(filterExpression);
             log.debug("向量检索添加过滤条件: {}", filterExpression);
         }
@@ -127,6 +131,8 @@ public class HybridSearchService {
 
             return jdbcTemplate.query(sql, rs -> {
                 List<Document> documents = new ArrayList<>();
+                ObjectMapper objectMapper = new ObjectMapper();
+
                 while (rs.next()) {
                     String id = rs.getString("id");
                     String content = rs.getString("content");
@@ -134,8 +140,17 @@ public class HybridSearchService {
 
                     Map<String, Object> metadata = new HashMap<>();
                     if (metadataJson != null && !metadataJson.isEmpty()) {
-                        // 简单的 JSON 解析，对于复杂场景可以使用 Jackson
-                        metadata.put("raw_metadata", metadataJson);
+                        try {
+                            // 使用 Jackson 完整解析 JSON 元数据
+                            Map<String, Object> parsedMetadata = objectMapper.readValue(
+                                    metadataJson,
+                                    new TypeReference<Map<String, Object>>() {}
+                            );
+                            metadata.putAll(parsedMetadata);
+                        } catch (Exception e) {
+                            log.warn("解析元数据失败，使用原始JSON: {}", e.getMessage());
+                            metadata.put("raw_metadata", metadataJson);
+                        }
                     }
                     metadata.put("id", id);
 

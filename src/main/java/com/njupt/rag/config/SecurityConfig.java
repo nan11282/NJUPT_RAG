@@ -9,6 +9,8 @@ import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.core.userdetails.User;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.core.userdetails.UserDetailsService;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.provisioning.InMemoryUserDetailsManager;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.web.cors.CorsConfiguration;
@@ -51,7 +53,7 @@ public class SecurityConfig {
                         // USER或ADMIN角色均可访问：聊天页面
                         .requestMatchers("/chat.html").hasAnyRole("USER", "ADMIN")
                         // 仅限ADMIN角色访问：文档管理API
-                        .requestMatchers("/api/documents/**").hasRole("ADMIN")
+                        .requestMatchers("/api/document/**").hasRole("ADMIN")
                         // USER或ADMIN角色均可访问：聊天API
                         .requestMatchers("/api/chat/**").hasAnyRole("USER", "ADMIN")
                         // 其他所有请求都需要经过认证
@@ -63,25 +65,39 @@ public class SecurityConfig {
     }
 
     /**
+     * 配置密码编码器。
+     * <p>
+     * 使用 BCrypt 密码编码器，提供安全的密码加密功能。
+     *
+     * @return PasswordEncoder 实例
+     */
+    @Bean
+    public PasswordEncoder passwordEncoder() {
+        return new BCryptPasswordEncoder();
+    }
+
+    /**
      * 配置用户详情服务，提供用户信息用于认证。
      * <p>
      * 此处使用内存存储，定义了两个用户：'user' 和 'admin'。
+     * 密码使用 BCrypt 加密。
      *
+     * @param passwordEncoder 密码编码器
      * @return UserDetailsService 实例
      */
     @Bean
-    public UserDetailsService userDetailsService() {
-        // 定义普通用户 'user'
-        UserDetails user = User.withDefaultPasswordEncoder()
-                .username("user")
-                .password("password")
+    public UserDetailsService userDetailsService(PasswordEncoder passwordEncoder) {
+        // 定义普通用户 'user'（密码已使用 BCrypt 加密）
+        // 原密码: password
+        UserDetails user = User.withUsername("user")
+                .password(passwordEncoder.encode("password"))
                 .roles("USER")
                 .build();
 
-        // 定义管理员用户 'admin'
-        UserDetails admin = User.withDefaultPasswordEncoder()
-                .username("admin")
-                .password("admin")
+        // 定义管理员用户 'admin'（密码已使用 BCrypt 加密）
+        // 原密码: admin
+        UserDetails admin = User.withUsername("admin")
+                .password(passwordEncoder.encode("admin"))
                 .roles("ADMIN")
                 .build();
 

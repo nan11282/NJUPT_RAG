@@ -11,8 +11,10 @@ import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 
 /**
@@ -117,29 +119,23 @@ public class RagChatService {
         // 4. 构建完整 Prompt
         Prompt prompt = buildPrompt(documents, history, userQuery);
 
-        // 5. 调用LLM返回流式结果，并保存完整回答到历史
+        // 5. 使用 AtomicReference 收集完整响应回答到历史
+        AtomicReference<StringBuilder> fullAnswerBuilder = new AtomicReference<>(new StringBuilder());
+
         return chatClient.prompt(prompt)
                 .stream()
                 .content()
+                .doOnNext(chunk -> {
+                    // 每次收到数据块时，追加到完整回答中
+                    fullAnswerBuilder.get().append(chunk);
+                })
                 .doOnComplete(() -> {
-                    // 注意：流式响应时这里无法获取完整内容，
-                    // 实际应用中需要在前端拼接完整回答后通过另一个接口保存
-                    // 或者使用 buffer 收集流内容
-                    log.debug("流式回答完成，sessionId: {}", sessionId);
+                    // 流式响应完成后，自动保存完整回答到历史
+                    String fullAnswer = fullAnswerBuilder.get().toString();
+                    conversationHistoryService.addMessage(sessionId, MessageVO.user(userQuery));
+                    conversationHistoryService.addMessage(sessionId, MessageVO.assistant(fullAnswer));
+                    log.info("流式回答完成并已保存到历史，sessionId: {}, 回答长度: {}", sessionId, fullAnswer.length());
                 });
-    }
-
-    /**
-     * 保存流式聊天的完整回答。
-     *
-     * @param sessionId 会话 ID
-     * @param userQuery  用户问题
-     * @param answer     助手回答
-     */
-    public void saveStreamChatHistory(String sessionId, String userQuery, String answer) {
-        conversationHistoryService.addMessage(sessionId, MessageVO.user(userQuery));
-        conversationHistoryService.addMessage(sessionId, MessageVO.assistant(answer));
-        log.debug("流式聊天历史已保存，sessionId: {}", sessionId);
     }
 
     /**
@@ -216,10 +212,10 @@ public class RagChatService {
         // 构建用户消息（历史对话 + 当前问题）
         String userMessage = historyBuilder.toString() + "\n\n【当前问题】\n" + userQuery;
 
-        // 构建并返回 Prompt
-        return chatClient.prompt()
-                .system(systemMessage.getContent())
-                .user(userMessage)
-                .build();
+        // 使用 Prompt 类直接构建
+        List<org.springframework.ai.chat.messages.Message> messages = new ArrayList<>();
+        messages.add(systemMessage);
+        messages.add(new org.springframework.ai.chat.messages.UserMessage(userMessage));
+        return new Prompt(messages);
     }
 }

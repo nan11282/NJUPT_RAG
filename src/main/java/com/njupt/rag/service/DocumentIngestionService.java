@@ -1,5 +1,6 @@
 package com.njupt.rag.service;
 
+import com.njupt.rag.config.DocumentProperties;
 import com.njupt.rag.utils.ChineseRecursiveTextSplitter;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
@@ -21,20 +22,21 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.security.MessageDigest;
 import java.time.Instant;
-import java.util.ArrayList;
-import java.util.List;
+import java.util.*;
+import java.util.stream.Collectors;
 
 /**
  * 文档处理与入库服务。
-。
+ * <p>
  * 负责将外部文档（如PDF）加载、解析、切分、向量化，并最终存入向量数据库。
- * 支持两种加载方式：
- * 1. 应用启动时自动从 `classpath:data/` 目录加载。
- * 2. 通过 {@link com.njupt.rag.controller.DocumentController} API手动触发加载。
- *
+ * 支持多种加载方式：
+ * 1. 应用启动时自动从配置的路径加载（支持 classpath、文件系统等）。
+ * 2. 通过 {@link com.njupt.rag.controller.DocumentController} API 手动触发加载。
+ * <p>
  * 新增功能：
  * - 使用文件哈希检测文档内容变化
  * - 文档被修改时自动删除旧数据并重新处理
+ * - 支持多路径扫描和去重
  * - 支持文档级别的过滤
  */
 @Slf4j
@@ -44,6 +46,7 @@ public class DocumentIngestionService implements ResourceLoaderAware {
 
     private final VectorStore vectorStore;
     private final JdbcTemplate jdbcTemplate;
+    private final DocumentProperties documentProperties;
     private ResourceLoader resourceLoader;
 
     @Override
@@ -55,25 +58,51 @@ public class DocumentIngestionService implements ResourceLoaderAware {
      * 在应用启动后执行，自动扫描并加载指定目录下的文档。
      * <p>
      * 使用 {@link PostConstruct} 注解确保在依赖注入完成后执行。
+     * 支持从配置的多个路径扫描文档（classpath、文件系统等）。
      * 该方法会检查文档是否已存在或被修改，智能决定是否需要重新处理。
      */
     @PostConstruct
     public void loadDocumentsOnStartup() {
         Assert.notNull(resourceLoader, "ResourceLoader must be initialized.");
+        Assert.notNull(documentProperties, "DocumentProperties must be initialized.");
+
         try {
             log.info("--- 启动文档自动加载服务 ---");
-            ResourcePatternResolver resolver = (ResourcePatternResolver) resourceLoader;
-            Resource[] resources = resolver.getResources("classpath*:data/*.pdf");
 
-            if (resources.length == 0) {
-                log.warn("在 'classpath:data/' 目录下未找到任何PDF文件。");
+            ResourcePatternResolver resolver = (ResourcePatternResolver) resourceLoader;
+            List<String> documentPaths = documentProperties.getDocumentPathList();
+
+            // 按文件名去重，避免重复处理同一文件
+            Map<String, Resource> resourceMap = new LinkedHashMap<>();
+
+            for (String path : documentPaths) {
+                try {
+                    Resource[] resources = resolver.getResources(path);
+                    log.debug("从路径 '{}' 扫描到 {} 个文件", path, resources.length);
+
+                    for (Resource resource : resources) {
+                        String filename = resource.getFilename();
+                        if (filename != null && !filename.isEmpty()) {
+                            // 使用文件名作为 key，后加载的覆盖先加载的
+                            resourceMap.put(filename, resource);
+                        }
+                    }
+                } catch (IOException e) {
+                    log.warn("从路径 '{}' 扫描文档失败: {}", path, e.getMessage());
+                }
+            }
+
+            if (resourceMap.isEmpty()) {
+                log.warn("未找到任何PDF文件。配置的路径: {}", documentPaths);
                 return;
             }
 
-            log.info("在 'classpath:data/' 目录中扫描到 {} 个文档。", resources.length);
+            log.info("共扫描到 {} 个文档（去重后）。", resourceMap.size());
 
-            for (Resource resource : resources) {
-                String filename = resource.getFilename();
+            // 处理所有文档
+            for (Map.Entry<String, Resource> entry : resourceMap.entrySet()) {
+                String filename = entry.getKey();
+                Resource resource = entry.getValue();
 
                 // 使用文件哈希检查文档状态
                 FileUpdateStatus status = checkFileUpdateStatus(resource);
@@ -101,7 +130,7 @@ public class DocumentIngestionService implements ResourceLoaderAware {
             }
             log.info("--- 文档自动加载服务检查完毕 ---");
 
-        } catch (IOException e) {
+        } catch (Exception e) {
             log.error("启动时扫描文档失败。", e);
         }
     }
@@ -218,7 +247,7 @@ public class DocumentIngestionService implements ResourceLoaderAware {
 
         try {
             String sql = "DELETE FROM vector_store WHERE metadata->>'filename' = ?";
-            int deleted = = jdbcTemplate.update(sql, filename);
+            int deleted = jdbcTemplate.update(sql, filename);
             log.info("已删除文件 '{}' 的 {} 条旧数据。", filename, deleted);
         } catch (Exception e) {
             log.error("删除文件数据失败: {}", e.getMessage(), e);

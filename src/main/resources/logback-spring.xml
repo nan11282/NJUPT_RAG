@@ -1,0 +1,157 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+    <!-- 从 application.yml 读取配置 -->
+    <springProperty scope="context" name="LOG_PATH" source="njupter.logging.path" defaultValue="logs"/>
+    <springProperty scope="context" name="LOG_FILE_NAME" source="njupter.logging.file-name" defaultValue="njupter"/>
+    <springProperty scope="context" name="MAX_FILE_SIZE" source="njupter.logging.max-file-size" defaultValue="100MB"/>
+    <springProperty scope="context" name="MAX_HISTORY" source="njupter.logging.max-history" defaultValue="30"/>
+    <springProperty scope="context" name="MAIL_ENABLED" source="njupter.logging.mail.enabled" defaultValue="false"/>
+    <springProperty scope="context" name="MAIL_TO" source="njupter.logging.mail.to" defaultValue=""/>
+    <springProperty scope="context" name="MAIL_FROM" source="njupter.logging.mail.from" defaultValue=""/>
+    <springProperty scope="context" name="MAIL_SUBJECT" source="njupter.logging.mail.subject" defaultValue="NJUPTer 系统错误告警"/>
+
+    <!-- 控制台输出格式 -->
+    <property name="CONSOLE_LOG_PATTERN"
+              value="%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"/>
+
+    <!-- 文件输出格式 -->
+    <property name="FILE_LOG_PATTERN"
+              value="%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n%ex{full}"/>
+
+    <!-- 控制台 Appender -->
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>${CONSOLE_LOG_PATTERN}</pattern>
+            <charset>UTF-8</charset>
+        </encoder>
+    </appender>
+
+    <!-- INFO 级日志文件 Appender -->
+    <appender name="INFO_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${LOG_PATH}/${LOG_FILE_NAME}-info.log</file>
+        <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
+            <fileNamePattern>${LOG_PATH}/${LOG_FILE_NAME}-info-%d{yyyy-MM-dd}.log</fileNamePattern>
+            <maxHistory>${MAX_HISTORY}</maxHistory>
+        </rollingPolicy>
+        <triggeringPolicy class="ch.qos.logback.core.rolling.SizeBasedTriggeringPolicy">
+            <maxFileSize>${MAX_FILE_SIZE}</maxFileSize>
+        </triggeringPolicy>
+        <encoder>
+            <pattern>${FILE_LOG_PATTERN}</pattern>
+            <charset>UTF-8</charset>
+        </encoder>
+        <filter class="ch.qos.logback.classic.filter.LevelFilter">
+            <level>INFO</level>
+            <onMatch>ACCEPT</onMatch>
+            <onMismatch>DENY</onMismatch>
+        </filter>
+    </appender>
+
+    <!-- WARN 级日志文件 Appender -->
+    <appender name="WARN_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${LOG_PATH}/${LOG_FILE_NAME}-warn.log</file>
+        <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
+            <fileNamePattern>${LOG_PATH}/${LOG_FILE_NAME}-warn-%d{yyyy-MM-dd}.log</fileNamePattern>
+            <maxHistory>${MAX_HISTORY}</maxHistory>
+        </rollingPolicy>
+        <triggeringPolicy class="ch.qos.logback.core.rolling.SizeBasedTriggeringPolicy">
+            <maxFileSize>${MAX_FILE_SIZE}</maxFileSize>
+        </triggeringPolicy>
+        <encoder>
+            <pattern>${FILE_LOG_PATTERN}</pattern>
+            <charset>UTF-8</charset>
+        </encoder>
+        <filter class="ch.qos.logback.classic.filter.LevelFilter">
+            <level>WARN</level>
+            <onMatch>ACCEPT</onMatch>
+            <onMismatch>DENY</onMismatch>
+        </filter>
+    </appender>
+
+    <!-- ERROR 级日志文件 Appender -->
+    <appender name="ERROR_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${LOG_PATH}/${LOG_FILE_NAME}-error.log</file>
+        <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
+            <fileNamePattern>${LOG_PATH}/${LOG_FILE_NAME}-error-%d{yyyy-MM-dd}.log</fileNamePattern>
+            <maxHistory>${MAX_HISTORY}</maxHistory>
+        </rollingPolicy>
+        <triggeringPolicy class="ch.qos.logback.core.rolling.SizeBasedTriggeringPolicy">
+            <maxFileSize>${MAX_FILE_SIZE}</maxFileSize>
+        </triggeringPolicy>
+        <encoder>
+            <pattern>${FILE_LOG_PATTERN}</pattern>
+            <charset>UTF-8</charset>
+        </encoder>
+        <filter class="ch.qos.logback.classic.filter.LevelFilter">
+            <level>ERROR</level>
+            <onMatch>ACCEPT</onMatch>
+            <onMismatch>DENY</onMismatch>
+        </filter>
+    </appender>
+
+    <!-- ERROR 邮件通知 Appender -->
+    <appender name="ERROR_MAIL" class="ch.qos.logback.classic.net.SMTPAppender">
+        <if condition='property("MAIL_ENABLED").equals("true") &amp;&amp; !isNull("MAIL_TO")'>
+            <smtpHost>${spring.mail.host}</smtpHost>
+            <smtpPort>${spring.mail.port}</smtpPort>
+            <username>${spring.mail.username}</username>
+            <password>${spring.mail.password}</password>
+            <to>${MAIL_TO}</to>
+            <from>${MAIL_FROM}</from>
+            <subject>${MAIL_SUBJECT}</subject>
+            <layout class="ch.qos.logback.classic.PatternLayout">
+                <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n%ex{full}</pattern>
+                <charset>UTF-8</charset>
+            </layout>
+            <filter class="ch.qos.logback.classic.filter.LevelFilter">
+                <level>ERROR</level>
+                <onMatch>ACCEPT</onMatch>
+                <onMismatch>DENY</onMismatch>
+            </filter>
+        </if>
+    </appender>
+
+    <!-- 项目日志配置 -->
+    <logger name="com.njupt.rag" level="DEBUG" additivity="false">
+        <appender-ref ref="CONSOLE"/>
+        <appender-ref ref="INFO_FILE"/>
+        <appender-ref ref="WARN_FILE"/>
+        <appender-ref ref="ERROR_FILE"/>
+        <appender-ref ref="ERROR_MAIL"/>
+    </logger>
+
+    <!-- Spring 框架日志 -->
+    <logger name="org.springframework" level="INFO" additivity="false">
+        <appender-ref ref="CONSOLE"/>
+        <appender-ref ref="INFO_FILE"/>
+        <appender-ref ref="WARN_FILE"/>
+        <appender-ref ref="ERROR_FILE"/>
+        <appender-ref ref="ERROR_MAIL"/>
+    </logger>
+
+    <!-- Spring AI 日志 -->
+    <logger name="org.springframework.ai" level="INFO" additivity="false">
+        <appender-ref ref="CONSOLE"/>
+        <appender-ref ref="INFO_FILE"/>
+        <appender-ref ref="WARN_FILE"/>
+        <appender-ref ref="ERROR_FILE"/>
+        <appender-ref ref="ERROR_MAIL"/>
+    </logger>
+
+    <!-- Reactor 日志 -->
+    <logger name="reactor" level="WARN" additivity="false">
+        <appender-ref ref="CONSOLE"/>
+        <appender-ref ref="WARN_FILE"/>
+        <appender-ref ref="ERROR_FILE"/>
+        <appender-ref ref="ERROR_MAIL"/>
+    </logger>
+
+    <!-- 根日志配置 -->
+    <root level="INFO">
+        <appender-ref ref="CONSOLE"/>
+        <appender-ref ref="INFO_FILE"/>
+        <appender-ref ref="WARN_FILE"/>
+        <appender-ref ref="ERROR_FILE"/>
+        <appender-ref ref="ERROR_MAIL"/>
+    </root>
+</configuration>

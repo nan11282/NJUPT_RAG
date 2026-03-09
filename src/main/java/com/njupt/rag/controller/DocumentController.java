@@ -2,6 +2,7 @@ package com.njupt.rag.controller;
 
 import com.njupt.rag.config.DocumentConfig;
 import com.njupt.rag.service.DocumentIngestionService;
+import com.njupt.rag.vo.Result;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
@@ -10,7 +11,6 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
-import java.util.Map;
 
 /**
  * 文档管理相关的API端点。
@@ -37,8 +37,8 @@ public class DocumentController {
      * @return 文档信息列表
      */
     @GetMapping("/list")
-    public List<DocumentConfig.DocumentInfo> getDocumentList() {
-        return documentConfig.getItems();
+    public Result<List<DocumentConfig.DocumentInfo>> getDocumentList() {
+        return Result.success(documentConfig.getItems(), "获取文档列表成功");
     }
 
     /**
@@ -47,26 +47,24 @@ public class DocumentController {
      * 文件将被传递给 {@link DocumentIngestionService} 进行后续的解析、切分和向量化处理。
      *
      * @param file 用户通过 multipart/form-data 方式上传的文件
-     * @return 包含操作结果信息（成功或失败）的 ResponseEntity
+     * @return 操作结果
      */
     @PostMapping("/upload")
-    public ResponseEntity<Map<String, String>> uploadDocument(@RequestParam("file") MultipartFile file) {
+    public Result<String> uploadDocument(@RequestParam("file") MultipartFile file) {
         if (file.isEmpty()) {
-            log.warn("Upload attempt with an empty file.");
-            return ResponseEntity.badRequest().body(Map.of("message", "上传的文件不能为空。"));
+            log.warn("上传尝试空文件");
+            return Result.error("上传的文件不能为空");
         }
+
         try {
             log.info("开始处理上传的文件: {}", file.getOriginalFilename());
             documentIngestionService.processDocument(file.getResource());
             String successMessage = "文件处理成功: " + file.getOriginalFilename();
             log.info(successMessage);
-            return ResponseEntity
-                    .ok(Map.of("message", successMessage));
+            return Result.success(successMessage);
         } catch (Exception e) {
             log.error("处理文件失败: {}", file.getOriginalFilename(), e);
-            String errorMessage = "处理文件时发生错误: " + e.getMessage();
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body(Map.of("message", errorMessage));
+            return Result.error("处理文件时发生错误: " + e.getMessage());
         }
     }
 }

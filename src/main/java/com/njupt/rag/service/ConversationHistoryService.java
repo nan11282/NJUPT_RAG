@@ -17,7 +17,7 @@ import java.util.List;
  */
 @Slf4j
 @Service
-@RequiredArgsConstructor
+@RequiredArgsConstructshunor
 public class ConversationHistoryService {
 
     private final RedisTemplate<String, List<MessageVO>> redisTemplate;
@@ -26,6 +26,10 @@ public class ConversationHistoryService {
     private static final int MAX_HISTORY_SIZE = 5;
     private static final int MAX_TOKENS = 2000;
     private static final Duration SESSION_TTL = Duration.ofHours(2);
+
+    public ConversationHistoryService(RedisTemplate<String, List<MessageVO>> redisTemplate) {
+        this.redisTemplate = redisTemplate;
+    }
 
     /**
      * 获取会话历史。

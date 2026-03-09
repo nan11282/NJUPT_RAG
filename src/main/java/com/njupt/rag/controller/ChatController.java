@@ -1,6 +1,7 @@
 package com.njupt.rag.controller;
 
 import com.njupt.rag.service.RagChatService;
+import com.njupt.rag.vo.Result;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Flux;
@@ -68,10 +69,10 @@ public class ChatController {
      * 支持文档过滤，通过 targetDocument 参数指定检索范围。
      *
      * @param request 包含用户问题、会话 ID 和目标文档的请求体
-     * @return 包含完整答案和 sessionId 的 Map 对象
+     * @return 包含完整答案和 sessionId 的 Result 对象
      */
     @PostMapping
-    public Map<String, String> chat(@RequestBody ChatRequest request) {
+    public Result<Map<String, String>> chat(@RequestBody ChatRequest request) {
         String sessionId = request.sessionId();
         if (sessionId == null || sessionId.isEmpty()) {
             sessionId = UUID.randomUUID().toString();
@@ -82,20 +83,23 @@ public class ChatController {
             sessionId,
             request.targetDocument()
         );
-        return Map.of("answer", answer, "sessionId", sessionId);
+        return Result.success(Map.of("answer", answer, "sessionId", sessionId), "获取回答成功");
     }
 
     /**
-     * 保存流式聊天的历史记录。
-     * 前端在接收到完整回答后调用此接口保存历史。
+     * 保存流式聊天的历史记录（已废弃）。
+     * 流式聊天历史现在由服务端自动保存，不再需要前端调用此接口。
+     * 保留此接口是为了向后兼容，返回成功但不执行任何操作。
      *
      * @param request 包含问题、回答和会话 ID 的请求体
      * @return 操作结果
+     * @deprecated 流式聊天历史现在由服务端自动保存
      */
+    @Deprecated
     @PostMapping("/save-history")
-    public Map<String, String> saveHistory(@RequestBody SaveHistoryRequest request) {
-        ragChatService.saveStreamChatHistory(request.sessionId(), request.question(), request.answer());
-        return Map.of("status", "success");
+    public Result<String> saveHistory(@RequestBody SaveHistoryRequest request) {
+        // 历史记录已由 streamChat() 方法自动保存，此处为空操作以保持向后兼容
+        return Result.success("History is now automatically saved by server");
     }
 
     /**
@@ -105,9 +109,9 @@ public class ChatController {
      * @return 操作结果
      */
     @DeleteMapping("/clear/{sessionId}")
-    public Map<String, String> clearHistory(@PathVariable String sessionId) {
+    public Result<String> clearHistory(@PathVariable String sessionId) {
         ragChatService.clearHistory(sessionId);
-        return Map.of("status", "success");
+        return Result.success("清除历史成功");
     }
 
     /**
